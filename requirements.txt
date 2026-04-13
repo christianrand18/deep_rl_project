@@ -1,0 +1,10 @@
+networkx==3.4.2
+numpy==2.2.6
+pandas==2.3.3
+pulp==3.3.0
+python-dotenv==1.1.1
+scikit-learn==1.7.1
+torch==2.8.0
+torch-geometric==2.6.1
+tqdm==4.67.1
+wandb==0.22.0
