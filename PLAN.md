@@ -1,6 +1,5 @@
 # Implementation Plan: HRL + Brand Momentum AMoD Extension
 
-**Timeline:** April 27 – May 31, 2026 (~5 weeks, 2 people)  
 **Spec:** See [SPEC.md](SPEC.md) for full architecture details  
 **Issues:** [GitHub Issues](../../issues)
 
@@ -26,28 +25,7 @@
 
 ---
 
-## Waterfall
-
-```
-             Apr 27   May 3    May 10   May 17   May 24   May 31
-               |--------|--------|--------|--------|--------|
-
-Phase 0        [===== #7 Baseline setup =====]
-Phase 1                 [======= #5 Multi-day episode ========]
-                        [== #8 Parallelism ==]
-Phase 2                          [==== #2 Brand momentum =====]
-                                 [=== #3 Meta input ===]
-                                      [= #1 Meta reward =]
-Phase 3                                    [======= #4 Meta architecture =======]
-                                           [= #9 WandB =]
-Phase 4                                              [=== #10 Train Phase 1 ===]
-                                                          [=== #11 Train Phase 2 ===]
-Phase 5                                                        [=== #6 Post-hoc ===]
-```
-
----
-
-## Phase 0 — Foundation (Apr 27 – May 3)
+## Phase 0 — Foundation
 
 ### Issue #7: Set up baseline and obtain pre-trained checkpoints
 **Goal:** Confirm existing code runs and produce trained low-level policy checkpoints to build on.
@@ -61,7 +39,7 @@ Phase 5                                                        [=== #6 Post-hoc 
 
 ---
 
-## Phase 1 — Core Infrastructure (May 4 – May 10)
+## Phase 1 — Core Infrastructure
 
 ### Issue #5: Implement multi-day episode structure
 **Goal:** Wrap the existing episode loop so an episode spans N simulated days.
@@ -84,7 +62,7 @@ Phase 5                                                        [=== #6 Post-hoc 
 
 ---
 
-## Phase 2 — Brand Momentum + Meta Inputs (May 11 – May 17)
+## Phase 2 — Brand Momentum + Meta Inputs
 
 ### Issue #2: Brand momentum in utility function *(parallel with #3)*
 **Goal:** Add EMA-based brand momentum to the passenger choice model.
@@ -121,7 +99,7 @@ Phase 5                                                        [=== #6 Post-hoc 
 
 ---
 
-## Phase 3 — Meta-Policy (May 16 – May 24)
+## Phase 3 — Meta-Policy
 
 ### Issue #4: Meta-policy architecture and action interface
 **Goal:** Implement the PPO MLP meta-policy and wire it into the training loop.
@@ -145,7 +123,7 @@ Phase 5                                                        [=== #6 Post-hoc 
 
 ---
 
-## Phase 4 — Training Runs (May 21 – May 28)
+## Phase 4 — Training Runs
 
 ### Issue #10: Training Phase 1 — single meta-policy vs fixed opponent
 **Goal:** Validate the full HRL loop with one meta-policy learning against a frozen low-level opponent.
@@ -166,7 +144,7 @@ Phase 5                                                        [=== #6 Post-hoc 
 
 ---
 
-## Phase 5 — Analysis (May 26 – May 31)
+## Phase 5 — Analysis
 
 ### Issue #6: Design and run post-hoc analysis
 **Goal:** Produce the empirical results that answer the core research questions.
@@ -174,34 +152,10 @@ Phase 5                                                        [=== #6 Post-hoc 
 - **Pricing trajectory:** Do operators undercut early and raise prices later?
 - **Brand momentum dynamics:** How fast does momentum accumulate? Is there incumbency advantage?
 - **Equilibrium comparison:** HRL vs single-day baseline (prices, profits, served demand, market share)
-- **Sensitivity analysis:** Vary α (learning rate), β (passenger exploitation), N (days per episode)
+- **Sensitivity analysis:** Vary λ (decay speed), γ (momentum strength), N (days per episode)
 - **Phase 1 vs Phase 2:** Does competitive meta-vs-meta differ from meta-vs-baseline?
 
 **Done when:** Figures and summary statistics are generated for all key questions.
-
----
-
-## Checkpoints
-
-| Date | Checkpoint |
-|------|-----------|
-| May 3 | Pre-trained checkpoints exist; baseline runs on HPC |
-| May 10 | Multi-day loop runs; `num_days=1` matches baseline |
-| May 17 | Brand momentum modifies demand; meta inputs aggregate correctly |
-| May 24 | Meta-policy trains end-to-end in Phase 1 setup |
-| May 31 | Phase 2 training complete; post-hoc figures generated |
-
----
-
-## New Issues to Create
-
-These three issues don't exist yet and need to be opened:
-
-| Issue | Title | Depends on |
-|-------|-------|-----------|
-| #9 | Add WandB logging for meta-level metrics | #3, #1 |
-| #10 | Training Phase 1: single meta-policy vs fixed opponent | #4, #9 |
-| #11 | Training Phase 2: competitive meta-vs-meta | #10 |
 
 ---
 
@@ -211,5 +165,5 @@ These three issues don't exist yet and need to be opened:
 |------|-----------|
 | LP solver not parallelisable | Use HPC job arrays instead of shared-memory parallel envs |
 | Meta-policy doesn't learn (sparse reward signal) | Add auxiliary market-share bonus; reduce N to 4 days initially |
-| Training runs too slow for 5-week timeline | Front-load HPC runs; overlap Phase 4 with analysis writing |
+| Training runs too slow | Front-load HPC runs; overlap Phase 4 with analysis writing |
 | Rescorla-Wagner extension out of scope | EMA is the primary implementation; extension is optional if time allows |
