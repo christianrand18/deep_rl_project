@@ -45,50 +45,44 @@ Episode (N days, configurable via --num_days, default 8):
 
 ### 2. Brand Momentum in the Utility Function (Issue #2)
 
-> **Status: mechanism to be determined under Issue #2.** The theoretical foundation and candidate formulations are described below; the final choice of feedback signal r_o(d) will be settled during investigation.
+**Implementation: exponential moving average (EMA) of daily capture rate.**
 
-**Theoretical foundation — Rescorla-Wagner model (Sfeir et al., 2025):**
+Passengers are modelled as having a loyalty bias toward each operator that adapts slowly across days. Brand momentum is tracked as an EMA of each operator's daily **capture rate** — the fraction of the total potential demand pool that the operator actually served:
 
-The brand momentum mechanism is grounded in the Rescorla-Wagner reinforcement learning model from mathematical psychology. Passengers are modelled as maintaining a Q-value expectation for each operator, updated day-by-day via prediction errors:
+```
+M_o(d) = λ · M_o(d-1) + (1-λ) · s_o(d)      ← s_o(d) = served_o / potential_demand on day d
+```
+
+- `potential_demand` is the total passenger pool sampled before the MNL choice model runs (i.e. all passengers who *could* have taken a ride, including those who chose the outside option)
+- This is distinct from relative market share (`served_o / total_served`): if both operators price too high and passengers opt out, both capture rates fall correctly, whereas relative market share would remain artificially stable
+- `λ ∈ (0, 1)` is the decay parameter (high λ = slow adaptation / long memory; low λ = fast adaptation)
+- `M_o(0) = 0.5` at episode start (equal prior for both operators)
+
+Brand momentum enters the MNL utility function as:
+
+```
+U_{k,i,j,o}^t = β₀ + γ · M_o(d-1)  −  β_t · τ_{i,j}  −  (v̄/v_k) · p_{i,j,o}^t
+```
+
+- `γ` controls the strength of the loyalty effect; `γ = 0` recovers the original single-day choice model exactly
+- `β₀` is the operator-specific baseline preference (initially symmetric)
+
+**Flags:** `--brand_momentum_lambda` (default 0.9), `--brand_momentum_gamma` (default 0.0).
+
+**Sensitivity levers for post-hoc analysis:** λ (decay speed), γ (momentum strength), N (days per episode).
+
+---
+
+**Potential extension — Rescorla-Wagner model (Sfeir et al., 2025):**
+
+If the EMA implementation works and time allows, we can extend to the richer psychological model from Sfeir et al. where passengers form Q-value expectations updated via prediction errors:
 
 ```
 δ_o(d)   = r_o(d) − Q_o(d)           ← prediction error: actual minus expected
 Q_o(d+1) = Q_o(d) + α · δ_o(d)       ← Rescorla-Wagner update
 ```
 
-- `α ∈ (0, 1]` is the learning rate (high α = fast adaptation to recent experience; low α = slow, habitual updating). Equivalent to EMA with λ = 1−α.
-- `Q_o(0)` is the initial prior expectation, set to 0.5 at episode start (equal prior for both operators)
-- `δ_o(d)` is the prediction error: positive when operator o exceeded passenger expectations, negative otherwise
-
-The Q-value enters the utility function as:
-
-```
-U_{k,i,j,o}^t = γ_o + β · Q_o(d)  −  β_t · τ_{i,j}  −  (v̄/v_k) · p_{i,j,o}^t
-```
-
-- `β` controls the exploration-exploitation sensitivity of passengers: high β means passengers strongly exploit their learned expectations (high loyalty), low β means more exploratory behaviour
-- `β = 0` (or equivalently γ_o = 0 ∀ o) recovers the original single-day choice model exactly
-- `γ_o` is an operator-specific baseline preference (initially symmetric)
-
-**Open question — what is r_o(d)?** The feedback signal passengers use to update their expectations. Candidates to investigate under Issue #2:
-
-| Candidate | Definition | Rationale |
-|-----------|-----------|-----------|
-| Market share | s_o(d) = served_o / total_served | Simple, directly observable proxy for operator dominance |
-| Service completion rate | completed_o / potential_demand_o | Captures supply-side quality (did vehicles show up?) |
-| Inverse normalised wait time | 1 − avg_wait_o / max_wait | Directly reflects passenger experience quality |
-| Composite | weighted combination of above | Richer but harder to interpret |
-
-**Sensitivity levers for post-hoc analysis:** α (learning rate / EMA decay), β (passenger exploitation sensitivity), N (days per episode), choice of r_o(d).
-
-**Fallback — simple exponential smoothing:** If the Rescorla-Wagner formulation proves out of scope, fall back to a plain EMA with no utility-function β parameter:
-
-```
-M_o(d) = λ · M_o(d-1) + (1-λ) · s_o(d)      ← s_o(d) = market share on day d
-U_{k,i,j,o}^t = β₀ + γ · M_o(d-1)  −  β_t · τ_{i,j}  −  (v̄/v_k) · p_{i,j,o}^t
-```
-
-Setting γ = 0 recovers the original model. This is the Rescorla-Wagner update with r_o = market share, α = 1−λ, and β absorbed into γ — so it is a strict simplification, not a different mechanism.
+The EMA above is a special case of this (r_o = market share, α = 1−λ, β absorbed into γ). Extending would add an explicit β parameter for passenger exploitation sensitivity and open up alternative feedback signals r_o(d) such as service completion rate or inverse wait time. This is out of scope for the initial implementation.
 
 ---
 
@@ -98,19 +92,26 @@ After each day's simulation, the meta-policy for operator o observes a fixed-siz
 
 ```
 daily_state_o(d) = [
-  M_o(d-1),          # own brand momentum
-  M_opp(d-1),        # opponent brand momentum
-  profit_o(d-1),     # own daily profit (normalized)
-  profit_opp(d-1),   # opponent daily profit (normalized) — observed via prices only
-  avg_price_o(d-1),  # own average price scalar
-  avg_price_opp(d-1),# opponent average price scalar (observable)
-  reb_cost_o(d-1),   # own rebalancing cost (normalized)
-  served_o(d-1),     # own passengers served (normalized)
-  d / N,             # day progress within episode
+  M_o(d-1),              # own capture rate momentum (own internal tracking)
+  profit_o(d-1),         # own daily profit (normalised)
+  avg_price_o(d-1),      # own average price scalar
+  avg_price_opp(d-1),    # opponent average price (observable — check the app)
+  reb_cost_o(d-1),       # own rebalancing cost (normalised)
+  served_o(d-1),         # own absolute passengers served (normalised)
+  d / N,                 # day progress within episode
 ]
 ```
 
-Opponent profit is not directly observable (operators don't share revenue data), so it is excluded or estimated from observable signals. This matches the information asymmetry in the baseline paper.
+**Information asymmetry rationale:** This input set mirrors what a real operator (e.g. Uber) would plausibly know about a competitor (e.g. Lyft) on a daily basis:
+- Own figures (profit, costs, ridership, brand momentum) are known exactly from internal data
+- Opponent prices are observable by checking the competitor's app — consistent with the baseline paper
+- Opponent profit, fleet positions, and brand momentum are *not* observable and are excluded
+
+**Why M_opp is excluded:** Opponent brand momentum is an internal construct not visible to a competitor. Crucially, the combination of own capture rate `M_o` and opponent price `avg_price_opp` already lets the meta-policy distinguish the two competitive scenarios:
+- Own capture rate falling + opponent price low → competitor is winning passengers
+- Own capture rate falling + opponent price high → passengers are choosing the outside option (neither operator)
+
+This distinction would be lost if `s_o` were defined as relative market share (`served_o / total_served`), since passengers opting out would leave the ratio between operators unchanged.
 
 ---
 
