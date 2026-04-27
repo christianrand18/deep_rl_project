@@ -267,8 +267,9 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
 # Set up weights and biases (only for training mode)
 if not args.test:
-    run = wandb.init(
-        project="thesis",
+    wandb.init(
+        entity="bertram-hage-danmarks-tekniske-universitet-dtu",
+        project="deep_RL_project",
         name=args.checkpoint_path,
         config=args,
     )
@@ -1018,6 +1019,9 @@ if not args.test:
                             path=f"ckpt/{args.checkpoint_path}_agent1_test.pth")
                         model_agents[1].save_checkpoint(
                             path=f"ckpt/{args.checkpoint_path}_agent2_test.pth")
+
+    # Log checkpoint to wandb
+    wandb.save(f"ckpt/{args.checkpoint_path}_sample.pth")
 
     # Training loop finished - save all metrics
     wandb.finish()

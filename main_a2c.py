@@ -57,7 +57,8 @@ city = args.city
 if not args.test:
     # Set up weights and biases
     wandb.init(
-        project="thesis",
+        entity="bertram-hage-danmarks-tekniske-universitet-dtu",
+        project="deep_RL_project",
         name=args.checkpoint_path,
         config=args,
     )
@@ -531,6 +532,9 @@ if not args.test:
                         model.save_checkpoint(
                             path=f"ckpt/{args.checkpoint_path}_test.pth")
     
+    # Log checkpoint to wandb
+    wandb.save(f"ckpt/{args.checkpoint_path}_sample.pth")
+
     wandb.finish()
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
