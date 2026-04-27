@@ -1,4 +1,3 @@
-import argparse
 import copy
 import os
 import pickle
@@ -9,13 +8,30 @@ import wandb
 from dotenv import load_dotenv
 from tqdm import trange
 
+from src.arguments import A2CArgumentBuilder
 from src.algos.a2c_gnn_multi_agent import A2C
 from src.algos.reb_flow_solver_multi_agent import solveRebFlow
 from src.envs.amod_env_multi import Scenario, AMoD
+from src.helpers.console_output import (
+    print_critic_warmup_banner,
+    print_multi_baseline_mode_banner,
+    print_multi_baseline_training_notice,
+    print_multi_test_results_summary,
+    print_multi_test_mode_banner,
+    print_multi_trip_data_saved,
+    print_multi_training_completed,
+    print_multi_train_mode_banner,
+    print_multi_visualization_summary,
+    print_od_price_observe_notice,
+)
 from src.misc.utils import dictsum, nestdictsum
 
 # Load environment variables from .env file
 load_dotenv()
+CPLEX_PATH = os.getenv('CPLEX_PATH')
+
+# Create required directories
+for dir in ["saved_files", "ckpt", "logs"]: os.makedirs(dir, exist_ok=True)
 
 # Calibrated simulation parameters
 demand_ratio = {'san_francisco': 2,'nyc_man_south': 1.0, 'washington_dc': 4.2}
@@ -30,279 +46,11 @@ wage = {'san_francisco': 17.76, 'nyc_man_south': 22.77, 'washington_dc': 25.26}
 
 test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'washington_dc':3}
 
-parser = argparse.ArgumentParser(description="A2C-GNN")
-
-# Simulator parameters
-parser.add_argument(
-    "--seed", type=int, default=10, metavar="S", help="random seed (default: 10)"
-)
-
-parser.add_argument(
-    "--model_type",
-    type=str,
-    default="running", 
-    help="Defines the type of model (default: running)",
-)
-
-parser.add_argument(
-    "--demand_ratio",
-    type=float,
-    default=1,
-    metavar="S",
-    help="demand_ratio (default: 1)",
-)
-parser.add_argument(
-    "--json_hr", type=int, default=19, metavar="S", help="json_hr (default: 19)"
-)
-parser.add_argument(
-    "--json_tstep",
-    type=int,
-    default=3,
-    metavar="S",
-    help="minutes per timestep (default: 3min)",
-)
-parser.add_argument(
-    '--mode', 
-    type=int, 
-    default=2,
-    help='rebalancing mode. (0:manual, 1:pricing, 2:both, 3:baseline (no reb, fixed price), 4:baseline (uniform reb, fixed price). default 2)',
-)
-
-# Model parameters
-parser.add_argument(
-    "--test", 
-    action="store_true",
-    default=False, 
-    help="activates test mode for agent evaluation"
-)
-parser.add_argument(
-    "--cplexpath",
-    type=str,
-    default="/apps/cplex/cplex1210/opl/bin/x86-64_linux/", # Changed to HPC PATH
-    help="defines directory of the CPLEX installation",
-)
-
-parser.add_argument(
-    "--directory",
-    type=str,
-    default="saved_files",
-    help="defines directory where to save files",
-)
-parser.add_argument(
-    "--max_episodes",
-    type=int,
-    default=100000,
-    metavar="N",
-    help="number of episodes to train agent (default: 100k)",
-)
-parser.add_argument(
-    "--max_steps",
-    type=int,
-    default=20,
-    metavar="N",
-    help="number of steps per episode (default: 20)",
-)
-parser.add_argument(
-    "--cuda", 
-    action="store_true",
-    default=False,
-    help="Enables CUDA training",
-)
-
-parser.add_argument(
-    "--jitter",
-    type=int,
-    default=1,
-    help="jitter for demand 0 (default: 1)",
-)
-
-parser.add_argument(
-    "--maxt",
-    type=int,
-    default=2,
-    help="maximum passenger waiting time in time steps (default: 2)",
-)
-
-parser.add_argument(
-    "--hidden_size",
-    type=int,
-    default=256,
-    help="hidden size of neural networks (default: 256)",
-)
-
-parser.add_argument(
-    "--checkpoint_path",
-    type=str,
-    default="A2C",
-    help="name of checkpoint file to save/load (default: A2C)",
-)
-parser.add_argument(
-    "--load_checkpoint_path",
-    type=str,
-    default=None,
-    help="name of checkpoint file to load from (if different from checkpoint_path). If not specified, uses checkpoint_path (default: None)",
-)
-parser.add_argument(
-    "--load",
-    action="store_true",
-    default=False,
-    help="either to start training from checkpoint (default: False)",
-)
-
-parser.add_argument(
-    "--actor_clip",
-    type=float,
-    default=1000,
-    help="clip value for actor gradient clipping (default: 1000)",
-)
-
-parser.add_argument(
-    "--critic_clip",
-    type=float,
-    default=1000,
-    help="clip value for critic gradient clipping (default: 1000)",
-)
-
-parser.add_argument(
-    "--critic_warmup_episodes",
-    type=int,
-    default=50,
-    help="number of episodes to train only critic before training actor (default: 50)",
-)
-
-parser.add_argument(
-    "--p_lr",
-    type=float,
-    default=2e-4,
-    help="learning rate for policy network (default: 2e-4)",
-)
-
-parser.add_argument(
-    "--q_lr",
-    type=float,
-    default=6e-4,
-    help="learning rate for Q networks (default: 6e-4)",
-)
-
-parser.add_argument(
-    "--city",
-    type=str,
-    default="nyc_man_south",
-    help="city to train on",
-)
-
-parser.add_argument(
-    "--impute",
-    type=int,
-    default=0,
-    help="Whether impute the zero price (default: False)",
-)
-
-parser.add_argument(
-    "--supply_ratio",
-    type=float,
-    default=1.0,
-    help="supply scaling factor (default: 1)",
-)
-
-parser.add_argument(
-    "--agent0_vehicle_ratio",
-    type=float,
-    default=0.5,
-    help="Proportion of vehicles for agent 0 (default: 0.5, range: 0.0-1.0)",
-)
-
-parser.add_argument(
-    "--total_vehicles",
-    type=int,
-    default=None,
-    help="Total number of vehicles in the system. If None, reads from dataset (default: None)",
-)
-
-parser.add_argument(
-    "--look_ahead",
-    type=int,
-    default=6,
-    help="Time steps to look ahead (default: 6)",
-)
-
-parser.add_argument(
-    "--scale_factor",
-    type=float,
-    default=0.01,
-    help="Scale factor (default: 0.01)",
-)
-
-parser.add_argument(
-    "--gamma",
-    type=float,
-    default=0.97,
-    help="Discount factor (default: 0.97)",
-)
-
-parser.add_argument(
-    "--choice_price_mult",
-    type=float,
-    default=1.0,
-    help="Choice price multiplier (default: 1.0)",
-)
-
-parser.add_argument(
-    "--fix_agent",
-    type=int,
-    default=2,
-    choices=[0, 1, 2],
-    help="Fix agent behavior for testing: 0=fix agent 0, 1=fix agent 1, 2=no fixing (default: 2)",
-)
-
-parser.add_argument(
-    "--od_price_observe",
-    action="store_true",
-    default=False,
-    help="Use OD price matrices instead of aggregated prices per region (default: False)",
-)
-
-parser.add_argument(
-    "--od_price_actions",
-    action="store_true",
-    default=False,
-    help="Use OD-based price scalars (N×N outputs) instead of origin-based (N outputs) (default: False)",
-)
-
-parser.add_argument(
-    "--no_share_info",
-    action="store_true",
-    default=False,
-    help="Don't share competitor pricing info between agents (default: False)",
-)
-
-parser.add_argument(
-    "--reward_scalar",
-    type=float,
-    default=2000.0,
-    help="Reward scaling factor (default: 1000.0)",
-)
-
-parser.add_argument(
-    "--use_dynamic_wage_man_south",
-    action="store_true",
-    default=False,
-    help="Enable region-specific wage distributions for NYC Manhattan South (default: False)",
-)
-
-# Parser arguments
-args = parser.parse_args()
-
-# Validate agent0_vehicle_ratio
-if not (0.0 <= args.agent0_vehicle_ratio <= 1.0):
-    raise ValueError(f"agent0_vehicle_ratio must be between 0.0 and 1.0, got {args.agent0_vehicle_ratio}")
+args = A2CArgumentBuilder.parse_multi_agent_args()
 
 # Automatically enable od_price_observe when od_price_actions is True
 if args.od_price_actions and not args.od_price_observe:
-    print("=" * 80)
-    print("INFO: Automatically enabling --od_price_observe since --od_price_actions is set")
-    print("      (OD-based actions require OD-based observations)")
-    print("=" * 80)
+    print_od_price_observe_notice()
     args.od_price_observe = True
 
 # Set device
@@ -519,7 +267,6 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
 # Set up weights and biases (only for training mode)
 if not args.test:
-    wandb.login(key=os.getenv('WANDB_API_KEY'))
     run = wandb.init(
         project="thesis",
         name=args.checkpoint_path,
@@ -546,28 +293,7 @@ if not args.test:
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions)
     
     # Print fixed agent information
-    if args.fix_agent == 0:
-        print("=" * 80)
-        print("FIXED AGENT MODE: Agent 0 is FIXED")
-        print("- Agent 0 uses BASE PRICES (scalar=0.5, no learning)")
-        print("- Agent 0 is included in choice model and can receive demand")
-        print("- Agent 0 vehicles reset to initial distribution each step")
-        print("- Agent 1 is LEARNING (adjusts prices dynamically)")
-        print("=" * 80)
-    elif args.fix_agent == 1:
-        print("=" * 80)
-        print("FIXED AGENT MODE: Agent 1 is FIXED")
-        print("- Agent 1 uses BASE PRICES (scalar=0.5, no learning)")
-        print("- Agent 1 is included in choice model and can receive demand")
-        print("- Agent 1 vehicles reset to initial distribution each step")
-        print("- Agent 0 is LEARNING (adjusts prices dynamically)")
-        print("=" * 80)
-    else:
-        print("=" * 80)
-        print("NORMAL MODE: Both agents are active and learning")
-        print("- Demand is split via choice model")
-        print("- Both agents learn simultaneously")
-        print("=" * 80)
+    print_multi_train_mode_banner(args.fix_agent)
 
     # Only create models if not in baseline mode (mode 3 or 4)
     if args.mode not in [3, 4]:
@@ -611,20 +337,10 @@ if not args.test:
                 for a in [0, 1]
             }
     elif args.mode == 3:
-        print("=" * 80)
-        print("BASELINE MODE (Mode 3): No learning, fixed policy")
-        print("- Both agents use BASE PRICE (scalar=0.5)")
-        print("- NO rebalancing performed")
-        print("- Provides baseline for comparison")
-        print("=" * 80)
+        print_multi_baseline_mode_banner(args.mode, is_test=False)
         model_agents = None  # No models needed
     else:  # mode == 4
-        print("=" * 80)
-        print("BASELINE MODE (Mode 4): No learning, fixed policy with uniform rebalancing")
-        print("- Both agents use BASE PRICE (scalar=0.5)")
-        print("- UNIFORM rebalancing (distribute vehicles equally across regions)")
-        print("- Provides baseline for comparison")
-        print("=" * 80)
+        print_multi_baseline_mode_banner(args.mode, is_test=False)
         model_agents = None  # No models needed
 
     if args.load and args.mode not in [3, 4]:
@@ -652,15 +368,10 @@ if not args.test:
         
         # Print critic warmup information
         if args.critic_warmup_episodes > 0:
-            print("=" * 80)
-            print(f"CRITIC WARMUP ENABLED: {args.critic_warmup_episodes} episodes")
-            print(f"- Episodes 0-{args.critic_warmup_episodes-1}: Critic only (actor frozen)")
-            print(f"- Episodes {args.critic_warmup_episodes}+: Both actor and critic training")
-            print("=" * 80 + "\n")
+            print_critic_warmup_banner(args.critic_warmup_episodes)
     else:
         # Mode 3 or 4: Baseline modes - skip model training, run simulation with fixed policy
-        print("\nRunning baseline mode with fixed policy...")
-        print("No training will be performed. Running test episodes only.\n")
+        print_multi_baseline_training_notice()
 
     # Check metrics
     epoch_demand_list = []
@@ -1296,7 +1007,7 @@ if not args.test:
             for agent_id in [0, 1]:
                 model_agents[agent_id].eval()
             test_reward, test_served_demand, test_rebalancing_cost = test_agents(
-                    model_agents=model_agents, test_episodes=10, env=env, cplexpath=args.cplexpath, directory=args.directory, max_episodes=args.max_episodes, mode=args.mode, job_id=args.checkpoint_path)
+                    model_agents=model_agents, test_episodes=10, env=env, cplexpath=CPLEX_PATH, directory=args.directory, max_episodes=args.max_episodes, mode=args.mode, job_id=args.checkpoint_path)
             for agent_id in [0, 1]:
                 model_agents[agent_id].train()
 
@@ -1328,7 +1039,7 @@ if not args.test:
     with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}.pickle", 'wb') as f:
         pickle.dump(export, f)
 
-    print(f"\nTraining completed! Metrics saved to {metricPath}")
+    print_multi_training_completed(metricPath)
 
 else:
     scenario = Scenario(
@@ -1346,27 +1057,7 @@ else:
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions)
     
     # Print fixed agent information
-    if args.fix_agent == 0:
-        print("=" * 80)
-        print("TEST MODE - FIXED AGENT: Agent 0 is FIXED")
-        print("- Agent 0 uses BASE PRICES (scalar=0.5, no learning)")
-        print("- Agent 0 is included in choice model and can receive demand")
-        print("- Agent 0 vehicles reset to initial distribution each step")
-        print("- Agent 1 uses learned policy")
-        print("=" * 80)
-    elif args.fix_agent == 1:
-        print("=" * 80)
-        print("TEST MODE - FIXED AGENT: Agent 1 is FIXED")
-        print("- Agent 1 uses BASE PRICES (scalar=0.5, no learning)")
-        print("- Agent 1 is included in choice model and can receive demand")
-        print("- Agent 1 vehicles reset to initial distribution each step")
-        print("- Agent 0 uses learned policy")
-        print("=" * 80)
-    else:
-        print("=" * 80)
-        print("TEST MODE - NORMAL: Both agents are active")
-        print("- Demand is split via choice model")
-        print("=" * 80)
+    print_multi_test_mode_banner(args.fix_agent)
 
     # Calculate input size based on price type
     if args.od_price_observe:
@@ -1420,20 +1111,10 @@ else:
         for agent_id in [0, 1]:
             model_agents[agent_id].eval()
     elif args.mode == 3:
-        print("=" * 80)
-        print("TEST MODE - BASELINE (Mode 3): No learning, fixed policy")
-        print("- Both agents use BASE PRICE (scalar=0.5)")
-        print("- NO rebalancing performed")
-        print("- Provides baseline for comparison")
-        print("=" * 80)
+        print_multi_baseline_mode_banner(args.mode, is_test=True)
         model_agents = None  # No models needed
     else:  # mode == 4
-        print("=" * 80)
-        print("TEST MODE - BASELINE (Mode 4): No learning, fixed policy with uniform rebalancing")
-        print("- Both agents use BASE PRICE (scalar=0.5)")
-        print("- UNIFORM rebalancing (distribute vehicles equally across regions)")
-        print("- Provides baseline for comparison")
-        print("=" * 80)
+        print_multi_baseline_mode_banner(args.mode, is_test=True)
         model_agents = None  # No models needed
     
     # Initialize lists for logging
@@ -1925,17 +1606,7 @@ else:
     
     with open(visualization_filename, 'wb') as f:
         pickle.dump(visualization_data, f)
-    
-    print(f"\n{'='*80}")
-    print(f"Visualization data saved to {visualization_filename}")
-    print(f"Data structure:")
-    print(f"  - agent_price_scalars: {[visualization_data['agent_price_scalars'][a].shape if len(visualization_data['agent_price_scalars'][a]) > 0 else 'empty' for a in [0, 1]]}")
-    print(f"  - agent_reb_actions: {[visualization_data['agent_reb_actions'][a].shape if len(visualization_data['agent_reb_actions'][a]) > 0 else 'empty' for a in [0, 1]]}")
-    print(f"  - agent_reb_flows: {[visualization_data['agent_reb_flows'][a].shape if len(visualization_data['agent_reb_flows'][a]) > 0 else 'empty' for a in [0, 1]]}")
-    print(f"  - agent_acc_temporal: {[visualization_data['agent_acc_temporal'][a].shape if len(visualization_data['agent_acc_temporal'][a]) > 0 else 'empty' for a in [0, 1]]}")
-    print(f"  - agent_demand: {[visualization_data['agent_demand'][a].shape if len(visualization_data['agent_demand'][a]) > 0 else 'empty' for a in [0, 1]]}")
-    print(f"  - edges: {len(visualization_data['edges'])} edges")
-    print(f"{'='*80}\n")
+    print_multi_visualization_summary(visualization_filename, visualization_data)
     
     # Save trip data from last episode to CSV
     if trip_data_last_episode:
@@ -1944,105 +1615,20 @@ else:
         trip_filename = f"{args.directory}/trip_data/trip_assignments_{city}_mode{args.mode}_fixagent{args.fix_agent}_episodes{args.max_episodes}.csv"
         os.makedirs(f"{args.directory}/trip_data", exist_ok=True)
         df_trips.to_csv(trip_filename, index=False)
-        print(f"\nTrip assignment data saved to {trip_filename}")
-        print(f"Total trips logged: {len(trip_data_last_episode)}")
-    # Extract values for each agent across all episodes
-    rewards_agent0 = [ep[0] for ep in epoch_reward_list]
-    rewards_agent1 = [ep[1] for ep in epoch_reward_list]
-    demands_agent0 = [ep[0] for ep in epoch_demand_list]
-    demands_agent1 = [ep[1] for ep in epoch_demand_list]
-    costs_agent0 = [ep[0] for ep in epoch_rebalancing_cost]
-    costs_agent1 = [ep[1] for ep in epoch_rebalancing_cost]
-    waiting_agent0 = [ep[0] for ep in epoch_waiting_list]
-    waiting_agent1 = [ep[1] for ep in epoch_waiting_list]
-    queue_agent0 = [ep[0] for ep in epoch_queue_length_list]
-    queue_agent1 = [ep[1] for ep in epoch_queue_length_list]
-    arrivals_agent0 = [ep[0] for ep in epoch_arrivals_list]
-    arrivals_agent1 = [ep[1] for ep in epoch_arrivals_list]
-    
-    # Combined totals
-    rewards_total = [ep[0] + ep[1] for ep in epoch_reward_list]
-    demands_total = [ep[0] + ep[1] for ep in epoch_demand_list]
-    costs_total = [ep[0] + ep[1] for ep in epoch_rebalancing_cost]
-    arrivals_total = [ep[0] + ep[1] for ep in epoch_arrivals_list]
-    
-    print("\n" + "="*80)
-    print("TEST RESULTS SUMMARY")
-    print("="*80)
-    
-    print("\nAgent 0 Metrics:")
-    print(f"  Rewards (mean, std): {np.mean(rewards_agent0):.2f}, {np.std(rewards_agent0):.2f}")
-    print(f"  Served demand (mean, std): {np.mean(demands_agent0):.2f}, {np.std(demands_agent0):.2f}")
-    print(f"  Rebalancing cost (mean, std): {np.mean(costs_agent0):.2f}, {np.std(costs_agent0):.2f}")
-    print(f"  Waiting time (mean, std): {np.mean(waiting_agent0):.2f}, {np.std(waiting_agent0):.2f}")
-    print(f"  Queue length (mean, std): {np.mean(queue_agent0):.2f}, {np.std(queue_agent0):.2f}")
-    print(f"  Arrivals (mean, std): {np.mean(arrivals_agent0):.2f}, {np.std(arrivals_agent0):.2f}")
-    
-    print("\nAgent 1 Metrics:")
-    print(f"  Rewards (mean, std): {np.mean(rewards_agent1):.2f}, {np.std(rewards_agent1):.2f}")
-    print(f"  Served demand (mean, std): {np.mean(demands_agent1):.2f}, {np.std(demands_agent1):.2f}")
-    print(f"  Rebalancing cost (mean, std): {np.mean(costs_agent1):.2f}, {np.std(costs_agent1):.2f}")
-    print(f"  Waiting time (mean, std): {np.mean(waiting_agent1):.2f}, {np.std(waiting_agent1):.2f}")
-    print(f"  Queue length (mean, std): {np.mean(queue_agent1):.2f}, {np.std(queue_agent1):.2f}")
-    print(f"  Arrivals (mean, std): {np.mean(arrivals_agent1):.2f}, {np.std(arrivals_agent1):.2f}")
-    
-    print("\nCombined Metrics:")
-    print(f"  Total rewards (mean, std): {np.mean(rewards_total):.2f}, {np.std(rewards_total):.2f}")
-    print(f"  Total served demand (mean, std): {np.mean(demands_total):.2f}, {np.std(demands_total):.2f}")
-    print(f"  Total rebalancing cost (mean, std): {np.mean(costs_total):.2f}, {np.std(costs_total):.2f}")
-    print(f"  Total arrivals (mean, std): {np.mean(arrivals_total):.2f}, {np.std(arrivals_total):.2f}")
-    
-    # Show average wage (always available now, regardless of dynamic wage flag)
-    avg_wages = [w for w in epoch_avg_wage_list if w is not None]
-    if avg_wages:
-        print(f"  Average wage (mean, std): {np.mean(avg_wages):.2f}, {np.std(avg_wages):.2f}")
-    
-    # Only show rebalancing trips for modes with rebalancing (0, 2, 4; not mode 1 or 3)
-    if args.mode not in [1, 3]:
-        reb_agent0 = [ep[0] for ep in epoch_rebalancing_list]
-        reb_agent1 = [ep[1] for ep in epoch_rebalancing_list]
-        reb_total = [ep[0] + ep[1] for ep in epoch_rebalancing_list]
-        print(f"  Agent 0 rebalancing trips (mean, std): {np.mean(reb_agent0):.2f}, {np.std(reb_agent0):.2f}")
-        print(f"  Agent 1 rebalancing trips (mean, std): {np.mean(reb_agent1):.2f}, {np.std(reb_agent1):.2f}")
-        print(f"  Total rebalancing trips (mean, std): {np.mean(reb_total):.2f}, {np.std(reb_total):.2f}")
-    
-    # Only show price scalar for modes 1, 2, and 3 (not mode 0)
-    if args.mode != 0:
-        price_agent0 = [ep[0] for ep in epoch_price_mean_list]
-        price_agent1 = [ep[1] for ep in epoch_price_mean_list]
-        print(f"  Agent 0 price scalar (mean, std): {np.mean(price_agent0):.2f}, {np.std(price_agent0):.2f}")
-        print(f"  Agent 1 price scalar (mean, std): {np.mean(price_agent1):.2f}, {np.std(price_agent1):.2f}")
-    
-    # Show concentration parameters (mode-specific, not for modes 3 and 4)
-    if args.mode not in [3, 4]:
-        print("\nConcentration Parameters:")
-        if args.mode == 0:
-            # Mode 0: Only Dirichlet for rebalancing
-            conc_dirichlet_agent0 = [ep[0] for ep in epoch_concentration_dirichlet_list]
-            conc_dirichlet_agent1 = [ep[1] for ep in epoch_concentration_dirichlet_list]
-            print(f"  Agent 0 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent0):.2f}, {np.std(conc_dirichlet_agent0):.2f}")
-            print(f"  Agent 1 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent1):.2f}, {np.std(conc_dirichlet_agent1):.2f}")
-        elif args.mode == 1:
-            # Mode 1: Beta (alpha, beta) for pricing
-            conc_alpha_agent0 = [ep[0] for ep in epoch_concentration_alpha_list]
-            conc_alpha_agent1 = [ep[1] for ep in epoch_concentration_alpha_list]
-            conc_beta_agent0 = [ep[0] for ep in epoch_concentration_beta_list]
-            conc_beta_agent1 = [ep[1] for ep in epoch_concentration_beta_list]
-            print(f"  Agent 0 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent0):.2f}, {np.std(conc_alpha_agent0):.2f}")
-            print(f"  Agent 0 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent0):.2f}, {np.std(conc_beta_agent0):.2f}")
-            print(f"  Agent 1 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent1):.2f}, {np.std(conc_alpha_agent1):.2f}")
-            print(f"  Agent 1 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent1):.2f}, {np.std(conc_beta_agent1):.2f}")
-        elif args.mode == 2:
-            # Mode 2: Beta (alpha, beta) for pricing + Dirichlet for rebalancing
-            conc_alpha_agent0 = [ep[0] for ep in epoch_concentration_alpha_list]
-            conc_alpha_agent1 = [ep[1] for ep in epoch_concentration_alpha_list]
-            conc_beta_agent0 = [ep[0] for ep in epoch_concentration_beta_list]
-            conc_beta_agent1 = [ep[1] for ep in epoch_concentration_beta_list]
-            conc_dirichlet_agent0 = [ep[0] for ep in epoch_concentration_dirichlet_list]
-            conc_dirichlet_agent1 = [ep[1] for ep in epoch_concentration_dirichlet_list]
-            print(f"  Agent 0 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent0):.2f}, {np.std(conc_alpha_agent0):.2f}")
-            print(f"  Agent 0 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent0):.2f}, {np.std(conc_beta_agent0):.2f}")
-            print(f"  Agent 0 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent0):.2f}, {np.std(conc_dirichlet_agent0):.2f}")
-            print(f"  Agent 1 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent1):.2f}, {np.std(conc_alpha_agent1):.2f}")
-            print(f"  Agent 1 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent1):.2f}, {np.std(conc_beta_agent1):.2f}")
-            print(f"  Agent 1 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent1):.2f}, {np.std(conc_dirichlet_agent1):.2f}")
+        print_multi_trip_data_saved(trip_filename, len(trip_data_last_episode))
+
+    print_multi_test_results_summary(
+        mode=args.mode,
+        epoch_reward_list=epoch_reward_list,
+        epoch_demand_list=epoch_demand_list,
+        epoch_rebalancing_cost=epoch_rebalancing_cost,
+        epoch_waiting_list=epoch_waiting_list,
+        epoch_queue_length_list=epoch_queue_length_list,
+        epoch_arrivals_list=epoch_arrivals_list,
+        epoch_rebalancing_list=epoch_rebalancing_list,
+        epoch_price_mean_list=epoch_price_mean_list,
+        epoch_avg_wage_list=epoch_avg_wage_list,
+        epoch_concentration_dirichlet_list=epoch_concentration_dirichlet_list if args.mode in [0, 2] else None,
+        epoch_concentration_alpha_list=epoch_concentration_alpha_list if args.mode in [1, 2] else None,
+        epoch_concentration_beta_list=epoch_concentration_beta_list if args.mode in [1, 2] else None,
+    )

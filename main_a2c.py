@@ -1,4 +1,3 @@
-import argparse
 import copy
 import os
 import pickle
@@ -9,13 +8,24 @@ import wandb
 from dotenv import load_dotenv
 from tqdm import trange
 
+from src.arguments import A2CArgumentBuilder
 from src.algos.a2c_gnn import A2C
 from src.algos.reb_flow_solver import solveRebFlow
 from src.envs.amod_env import Scenario, AMoD
+from src.helpers.console_output import (
+    print_od_price_observe_notice,
+    print_single_test_mode_banner,
+    print_single_test_summary,
+    print_single_train_mode_banner,
+)
 from src.misc.utils import dictsum, nestdictsum
 
 # Load environment variables from .env file
 load_dotenv()
+CPLEX_PATH = os.getenv('CPLEX_PATH')
+
+# Create required directories
+for dir in ["saved_files", "ckpt", "logs"]: os.makedirs(dir, exist_ok=True)
 
 # Calibrated simulation parameters
 demand_ratio = {'san_francisco': 2,'nyc_man_south': 1.0, 'washington_dc': 4.2}
@@ -30,247 +40,11 @@ wage = {'san_francisco': 17.76, 'nyc_man_south': 22.77, 'washington_dc': 25.26}
 
 test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'washington_dc':3}
 
-parser = argparse.ArgumentParser(description="A2C-GNN")
-
-# Simulator parameters
-parser.add_argument(
-    "--seed", type=int, default=10, metavar="S", help="random seed (default: 10)"
-)
-parser.add_argument(
-    "--demand_ratio",
-    type=float,
-    default=1,
-    metavar="S",
-    help="demand_ratio (default: 1)",
-)
-parser.add_argument(
-    "--json_hr", type=int, default=19, metavar="S", help="json_hr (default: 19)"
-)
-parser.add_argument(
-    "--json_tstep",
-    type=int,
-    default=3,
-    metavar="S",
-    help="minutes per timestep (default: 3min)",
-)
-parser.add_argument(
-    '--mode', 
-    type=int, 
-    default=2,
-    help='rebalancing mode. (0:rebalancing only, 1:pricing only, 2:both, 3:baseline no reb/fixed price, 4:baseline uniform reb/fixed price. default 2)',
-)
-
-parser.add_argument(
-    "--beta",
-    type=float,
-    default=0.5,
-    metavar="S",
-    help="cost of rebalancing (default: 0.5)",
-)
-
-# Model parameters
-parser.add_argument(
-    "--test", 
-    action="store_true",
-    default=False, 
-    help="activates test mode for agent evaluation"
-)
-parser.add_argument(
-    "--cplexpath",
-    type=str,
-    default="/apps/cplex/cplex1210/opl/bin/x86-64_linux/", # Changed to HPC PATH
-    help="defines directory of the CPLEX installation",
-)
-
-parser.add_argument(
-    "--directory",
-    type=str,
-    default="saved_files",
-    help="defines directory where to save files",
-)
-parser.add_argument(
-    "--max_episodes",
-    type=int,
-    default=100000,
-    metavar="N",
-    help="number of episodes to train agent (default: 100k)",
-)
-parser.add_argument(
-    "--max_steps",
-    type=int,
-    default=20,
-    metavar="N",
-    help="number of steps per episode (default: 20)",
-)
-parser.add_argument(
-    "--cuda", 
-    action="store_true",
-    default=False,
-    help="Enables CUDA training",
-)
-
-parser.add_argument(
-    "--jitter",
-    type=int,
-    default=1,
-    help="jitter for demand 0 (default: 1)",
-)
-parser.add_argument(
-    "--maxt",
-    type=int,
-    default=2,
-    help="maximum passenger waiting time in time steps (default: 2)",
-)
-
-parser.add_argument(
-    "--hidden_size",
-    type=int,
-    default=256,
-    help="hidden size of neural networks (default: 256)",
-)
-
-parser.add_argument(
-    "--checkpoint_path",
-    type=str,
-    default="A2C",
-    help="name of checkpoint file to save/load (default: A2C)",
-)
-parser.add_argument(
-    "--load",
-    action="store_true",
-    default=False,
-    help="either to start training from checkpoint (default: False)",
-)
-
-parser.add_argument(
-    "--model_type",
-    type=str,
-    default="running",
-    choices=["running", "test", "sample"],
-    help="which checkpoint variant to load: running, test, or sample (default: running)",
-)
-
-parser.add_argument(
-    "--actor_clip",
-    type=float,
-    default=1000,
-    help="clip value for actor gradient clipping (default: 1000)",
-)
-
-parser.add_argument(
-    "--critic_clip",
-    type=float,
-    default=1000,
-    help="clip value for critic gradient clipping (default: 1000)",
-)
-
-parser.add_argument(
-    "--critic_warmup_episodes",
-    type=int,
-    default=1000,
-    help="number of episodes to train only critic before training actor (default: 1000)",
-)
-
-parser.add_argument(
-    "--p_lr",
-    type=float,
-    default=2e-4,
-    help="learning rate for policy network (default: 2e-4)",
-)
-
-parser.add_argument(
-    "--q_lr",
-    type=float,
-    default=6e-4,
-    help="learning rate for Q networks (default: 6e-4)",
-)
-
-parser.add_argument(
-    "--city",
-    type=str,
-    default="nyc_man_south",
-    help="city to train on",
-)
-
-parser.add_argument(
-    "--impute",
-    type=int,
-    default=0,
-    help="Whether impute the zero price (default: False)",
-)
-
-parser.add_argument(
-    "--supply_ratio",
-    type=float,
-    default=1.0,
-    help="supply scaling factor (default: 1)",
-)
-
-parser.add_argument(
-    "--look_ahead",
-    type=int,
-    default=6,
-    help="Time steps to look ahead (default: 6)",
-)
-
-parser.add_argument(
-    "--scale_factor",
-    type=float,
-    default=0.01,
-    help="Scale factor (default: 0.01)",
-)
-
-parser.add_argument(
-    "--gamma",
-    type=float,
-    default=0.97,
-    help="Discount factor (default: 0.97)",
-)
-
-parser.add_argument(
-    "--choice_price_mult",
-    type=float,
-    default=1.0,
-    help="Choice price multiplier (default: 1.0)",
-)
-
-parser.add_argument(
-    "--od_price_observe",
-    action="store_true",
-    default=False,
-    help="Use OD price matrices instead of aggregated prices per region (default: False)",
-)
-
-parser.add_argument(
-    "--od_price_actions",
-    action="store_true",
-    default=False,
-    help="Use OD-based price scalars (N×N outputs) instead of origin-based (N outputs) (default: False)",
-)
-
-parser.add_argument(
-    "--reward_scalar",
-    type=float,
-    default=2000.0,
-    help="Reward scaling factor (default: 2000.0)",
-)
-
-parser.add_argument(
-    "--fix_baseline",
-    action="store_true",
-    default=False,
-    help="Fix baseline behavior: use base price and initial vehicle distribution (default: False)",
-)
-
-# Parser arguments
-args = parser.parse_args()
+args = A2CArgumentBuilder.parse_single_agent_args()
 
 # Automatically enable od_price_observe when od_price_actions is True
 if args.od_price_actions and not args.od_price_observe:
-    print("=" * 80)
-    print("INFO: Automatically enabling --od_price_observe since --od_price_actions is set")
-    print("      (OD-based actions require OD-based observations)")
-    print("=" * 80)
+    print_od_price_observe_notice()
     args.od_price_observe = True
 
 # Set device
@@ -282,7 +56,6 @@ city = args.city
 
 if not args.test:
     # Set up weights and biases
-    wandb.login(key=os.getenv('WANDB_API_KEY'))
     wandb.init(
         project="thesis",
         name=args.checkpoint_path,
@@ -304,39 +77,12 @@ if not args.test:
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_baseline=args.fix_baseline, choice_intercept=choice_intercept[city], wage=wage[city], od_price_actions=args.od_price_actions)
     
     # Print baseline information
-    if args.fix_baseline:
-        print("\n" + "="*50)
-        print("FIXED BASELINE MODE ACTIVATED")
-        print("="*50)
-        print("Behavior:")
-        print("  - Prices: Always using base price (price scalar = 0.5)")
-        print("  - Rebalancing: Always rebalancing to initial distribution")
-        initial_vehicles = env.get_initial_vehicles()
-        print(f"  - Initial vehicles: {initial_vehicles}")
-        print(f"  - Target distribution: {dict(env.initial_acc)}")
-        print("="*50 + "\n")
-    elif args.mode == 3:
-        print("\n" + "="*80)
-        print("BASELINE MODE (Mode 3): No learning, fixed policy")
-        print("="*80)
-        print("- Both agents use BASE PRICE (scalar=0.5)")
-        print("- NO rebalancing (vehicles stay where trips end)")
-        print("- Provides baseline for comparison")
-        print("="*80 + "\n")
-    elif args.mode == 4:
-        print("\n" + "="*80)
-        print("BASELINE MODE (Mode 4): No learning, fixed policy with uniform rebalancing")
-        print("="*80)
-        print("- Both agents use BASE PRICE (scalar=0.5)")
-        print("- UNIFORM rebalancing (distribute vehicles equally across regions)")
-        print("- Provides baseline for comparison")
-        print("="*80 + "\n")
-    else:
-        print("\n" + "="*50)
-        print("NORMAL TRAINING MODE")
-        print("="*50)
-        print("Agent will learn both pricing and rebalancing strategies")
-        print("="*50 + "\n")
+    print_single_train_mode_banner(
+        mode=args.mode,
+        fix_baseline=args.fix_baseline,
+        initial_vehicles=env.get_initial_vehicles(),
+        initial_distribution=env.initial_acc,
+    )
 
     # Only create model if not in baseline mode (mode 3 or 4)
     if args.mode not in [3, 4]:
@@ -407,20 +153,12 @@ if not args.test:
         if i_episode == train_episodes - 1:
             export = {"demand_ori":copy.deepcopy(env.demand)}
         action_rl = None
-        episode_reward = 0
-        episode_served_demand = 0
-        episode_unserved_demand = 0
-        episode_rebalancing_cost = 0
-        episode_total_revenue = 0
-        episode_operating_cost = 0
-        episode_waiting = 0
+        episode_reward, episode_served_demand, episode_rebalancing_cost, episode_waiting,\
+        episode_unserved_demand, episode_total_revenue, episode_operating_cost = 0, 0, 0, 0, 0, 0, 0
         # System-level demand tracking (not agent-specific)
-        episode_rejected_demand = 0  # Total demand rejected by choice model
-        episode_total_demand = 0  # Total demand generated in system
+
+        episode_rejected_demand, episode_total_demand, episode_true_profit, episode_adjusted_profit, episode_unprofitable_trips = 0, 0, 0, 0, 0
         episode_rejection_rates = []  # Track rejection rate per step
-        episode_true_profit = 0
-        episode_adjusted_profit = 0
-        episode_unprofitable_trips = 0
         actions = []
         actions_price = []  # Track price scalars during episode
         
@@ -785,7 +523,7 @@ if not args.test:
             if i_episode % 100 == 0:
                     model.eval()
                     test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
-                        10, env, args.cplexpath, args.directory)
+                        10, env, CPLEX_PATH, args.directory)
                     model.train()
 
                     if test_reward >= best_reward_test:
@@ -859,22 +597,10 @@ else:
         
         model.eval()  # set model in evaluation mode for testing
     elif args.mode == 3:
-        print("\n" + "="*80)
-        print("TEST MODE - BASELINE (Mode 3): No learning, fixed policy")
-        print("="*80)
-        print("- Using BASE PRICE (scalar=0.5)")
-        print("- NO rebalancing (vehicles stay where trips end)")
-        print("- Provides baseline for comparison")
-        print("="*80 + "\n")
+        print_single_test_mode_banner(args.mode)
         model = None
     elif args.mode == 4:
-        print("\n" + "="*80)
-        print("TEST MODE - BASELINE (Mode 4): No learning, fixed policy with uniform rebalancing")
-        print("="*80)
-        print("- Using BASE PRICE (scalar=0.5)")
-        print("- UNIFORM rebalancing (distribute vehicles equally across regions)")
-        print("- Provides baseline for comparison")
-        print("="*80 + "\n")
+        print_single_test_mode_banner(args.mode)
         model = None
 
     test_episodes = args.max_episodes  # set max number of training episodes
@@ -885,38 +611,16 @@ else:
      # Initialize lists for logging
     log = {"test_reward": [], "test_served_demand": [], "test_reb_cost": []}
 
-    rewards = []
-    demands = []
-    costs = []
-    arrivals = []
+    rewards, demands, costs, arrivals = [], [], [], []
 
-    demand_original_steps = []
-    demand_scaled_steps = []
-    reb_steps = []
-    reb_ori_steps = []
-    reb_num = []
-    pax_steps = []
-    pax_wait = []
-    actions_step = []
-    price_mean = []
-    available_steps = []
-    rebalancing_cost_steps = []
-    price_original_steps = []
-    queue_steps = []
-    waiting_steps = []
+    demand_original_steps, price_original_steps, demand_scaled_steps, reb_steps,\
+    reb_ori_steps, reb_num, pax_steps, pax_wait, actions_step, price_mean, available_steps,\
+    rebalancing_cost_steps, queue_steps, waiting_steps = ([] for _ in range(13))
 
     for episode in range(10):
-        actions = []
-        actions_price = []
-        rebalancing_cost = []
-        rebalancing_num = []
-        queue = []
+        actions, actions_price, rebalancing_cost, rebalancing_num, queue, episode_price = ([] for _ in range(6))
 
-        episode_reward = 0
-        episode_served_demand = 0
-        episode_price = []
-        episode_rebalancing_cost = 0
-        episode_waiting = 0
+        episode_reward, episode_served_demand, episode_rebalancing_cost, episode_waiting = 0, 0, 0, 0
         obs = env.reset()
         # Original demand and price
         demand_original_steps.append(env.demand)
@@ -1076,12 +780,14 @@ else:
     with open(f"{args.directory}/{city}_demand_scaled_mode{args.mode}.pickle", 'wb') as f:
         pickle.dump(demand_scaled_steps, f)    
 
-    print("Rewards (mean, std):", f"{np.mean(rewards):.2f}", f"{np.std(rewards):.2f}")
-    print("Served demand (mean, std):", f"{np.mean(demands):.2f}", f"{np.std(demands):.2f}")
-    print("Rebalancing cost (mean, std):", f"{np.mean(costs):.2f}", f"{np.std(costs):.2f}")
-    print("Waiting time (mean, std):", f"{np.mean(waiting_steps):.2f}", f"{np.std(waiting_steps):.2f}")
-    print("Queue length (mean, std):", f"{np.mean(queue_steps):.2f}", f"{np.std(queue_steps):.2f}")
-    print("Arrivals (mean, std):", f"{np.mean(arrivals):.2f}", f"{np.std(arrivals):.2f}")
-    print("Rebalancing trips (mean, std):", f"{np.mean(reb_num):.2f}", f"{np.std(reb_num):.2f}")
-    if args.mode != 0:
-        print("Price scalar (mean, std):", f"{np.mean(price_mean):.2f}", f"{np.std(price_mean):.2f}")
+    print_single_test_summary(
+        rewards=rewards,
+        demands=demands,
+        costs=costs,
+        waiting_steps=waiting_steps,
+        queue_steps=queue_steps,
+        arrivals=arrivals,
+        reb_num=reb_num,
+        mode=args.mode,
+        price_mean=price_mean,
+    )
