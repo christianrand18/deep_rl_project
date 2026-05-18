@@ -24,7 +24,8 @@ from src.helpers.console_output import (
     print_multi_visualization_summary,
     print_od_price_observe_notice,
 )
-from src.misc.utils import dictsum, nestdictsum
+from src.misc.utils import dictsum, nestdictsum, DailyStatsAccumulator
+from src.algos.meta_policy import MetaPolicy
 
 # Load environment variables from .env file
 load_dotenv()
@@ -384,6 +385,29 @@ if not args.test:
     # Get initial vehicles
     initial_vehicles = env.get_initial_vehicles()
 
+    # --- Meta-policy setup ---
+    def _meta_agent_set(args):
+        if args.meta_policy == "none":
+            return set()
+        if args.meta_policy == "one":
+            return {args.meta_agent}
+        return {0, 1}
+
+    meta_agent_set = _meta_agent_set(args)
+    meta_policies = {}
+    for _a in meta_agent_set:
+        meta_policies[_a] = MetaPolicy(
+            obs_dim=7,
+            n_regions=env.nregion,
+            hidden_dim=args.meta_hidden_dim,
+            lr=args.meta_lr,
+            gamma=args.meta_gamma,
+            clip_eps=args.meta_clip_eps,
+            n_ppo_epochs=args.meta_ppo_epochs,
+            device=device,
+        )
+    accumulator = DailyStatsAccumulator() if meta_policies else None
+
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
 
@@ -444,6 +468,10 @@ if not args.test:
         # Track log probabilities during episode
         episode_logprobs = {0: [], 1: []}
 
+        # Meta-policy: episode-level state (reset each episode)
+        meta_obs = {a: np.zeros(7, dtype=np.float32) for a in [0, 1]}
+        meta_multipliers = {a: np.ones(env.nregion) for a in [0, 1]}
+
         for i_day in range(args.num_days):
             if i_day > 0:
                 obs = env.reset_day()
@@ -453,7 +481,23 @@ if not args.test:
             done = False
             step = 0
 
+            # Meta-policy: reset accumulator for this day and select daily multipliers
+            if meta_policies:
+                accumulator.reset(env)
+                for _a in meta_policies:
+                    meta_multipliers[_a] = meta_policies[_a].select_action(meta_obs[_a])
+
             while not done:
+                # Capture prices about to be submitted (for accumulator tracking)
+                if meta_policies and env.mode in [1, 2] and step > 0:
+                    if env.mode == 1:
+                        submitted_prices = {a: np.array(action_rl[a]) for a in [0, 1]}
+                    elif args.od_price_actions:
+                        submitted_prices = {a: np.array(action_rl[a])[:, :env.nregion] for a in [0, 1]}
+                    else:
+                        submitted_prices = {a: np.array(action_rl[a])[:, 0] for a in [0, 1]}
+                else:
+                    submitted_prices = None
                 if env.mode == 0:
                     # Make Match Step
                     obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
@@ -568,9 +612,19 @@ if not args.test:
                                 episode_min_concentration_beta[a] = min(episode_min_concentration_beta[a], np.min(concentrations[a][0, :, 1]))
                                 episode_max_concentration_beta[a] = max(episode_max_concentration_beta[a], np.max(concentrations[a][0, :, 1]))
 
+                    # Apply meta multipliers to mode 1 pricing actions
+                    if meta_policies:
+                        for _a in [0, 1]:
+                            if _a in meta_policies:
+                                arr = np.array(action_rl[_a])
+                                if args.od_price_actions:
+                                    action_rl[_a] = np.clip(meta_multipliers[_a][:, None] * arr, 0.0, 1.0)
+                                else:
+                                    action_rl[_a] = np.clip(meta_multipliers[_a] * arr, 0.0, 1.0)
+
                     # Matching update (global step)
                     env.matching_update()
-                
+
                 elif env.mode == 2:
                     # --- Matching step ---
                     obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
@@ -643,6 +697,17 @@ if not args.test:
                                 episode_min_concentration_dirichlet[a] = min(episode_min_concentration_dirichlet[a], np.min(concentrations[a][0, :, 2]))
                                 episode_max_concentration_dirichlet[a] = max(episode_max_concentration_dirichlet[a], np.max(concentrations[a][0, :, 2]))
                         
+                    # Apply meta multipliers to mode 2 pricing actions (price column only)
+                    if meta_policies:
+                        for _a in [0, 1]:
+                            if _a in meta_policies:
+                                if args.od_price_actions:
+                                    action_rl[_a][:, :env.nregion] = np.clip(
+                                        meta_multipliers[_a][:, None] * action_rl[_a][:, :env.nregion], 0.0, 1.0)
+                                else:
+                                    action_rl[_a][:, 0] = np.clip(
+                                        meta_multipliers[_a] * action_rl[_a][:, 0], 0.0, 1.0)
+
                     # --- Desired Acc computation ---
                     # Compute desired accumulation for all agents
                     desiredAcc = {}
@@ -747,10 +812,23 @@ if not args.test:
                 episode_total_demand += system_info["total_demand"]
                 episode_rejection_rates.append(system_info["rejection_rate"])
                 day_total_demand += system_info["total_demand"]
-            
+
+                if meta_policies:
+                    accumulator.update(info, system_info, submitted_prices)
+
                 step += 1
 
             env.update_brand_momentum(served_counts=day_served, total_demand=day_total_demand)
+
+            if meta_policies:
+                for _a in meta_policies:
+                    meta_policies[_a].store_reward(accumulator.profit[_a])
+                # Compute meta_obs for the next day using today's stats + updated M_o(d)
+                accumulator.momentum_snapshot = dict(env.brand_momentum)
+                meta_obs = {
+                    a: accumulator.daily_state(a, i_day + 1, args.num_days, args.reward_scalar)
+                    for a in [0, 1]
+                }
 
         # Update both agent models after episode and collect training metrics
         grad_norms = {}
@@ -786,6 +864,11 @@ if not args.test:
                     "advantage_mean": 0.0,
                     "advantage_std": 0.0,
                 }
+
+        # Meta-policy: PPO update at end of episode
+        if meta_policies:
+            for _a in meta_policies:
+                meta_policies[_a].update()
 
         # Get total vehicles for verification (returns dict with {agent_id: total_vehicles})
         total_vehicles = env.get_total_vehicles()

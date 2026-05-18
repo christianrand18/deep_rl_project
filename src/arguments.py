@@ -301,6 +301,31 @@ class A2CArgumentBuilder:
 			default=0.0,
 			help="Strength of brand momentum in MNL utility (default: 0.0 = disabled, reproduces baseline).",
 		)
+		parser.add_argument(
+			"--meta_policy",
+			type=str,
+			default="none",
+			choices=["none", "one", "both"],
+			help="Meta-policy mode: 'none' (disabled), 'one' (single agent, see --meta_agent), "
+			     "'both' (both agents). Default: none.",
+		)
+		parser.add_argument(
+			"--meta_agent",
+			type=int,
+			default=0,
+			choices=[0, 1],
+			help="Which agent gets the meta-policy when --meta_policy one. Default: 0.",
+		)
+		parser.add_argument("--meta_lr", type=float, default=3e-4,
+			help="Meta-policy learning rate (default: 3e-4).")
+		parser.add_argument("--meta_hidden_dim", type=int, default=128,
+			help="Meta-policy MLP hidden dimension (default: 128).")
+		parser.add_argument("--meta_gamma", type=float, default=0.99,
+			help="Meta-policy discount factor (default: 0.99).")
+		parser.add_argument("--meta_clip_eps", type=float, default=0.2,
+			help="PPO clip epsilon for meta-policy (default: 0.2).")
+		parser.add_argument("--meta_ppo_epochs", type=int, default=4,
+			help="Number of PPO epochs per meta-policy update (default: 4).")
 		return parser
 
 	@classmethod
