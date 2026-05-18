@@ -355,30 +355,15 @@ class AMoD:
                         U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
                         U_reject_mean = U_reject
                         
-                        # Build choice set
-                        exp_utilities = []
-                        labels = []
-                        
-                        # Always include both agents in the choice set
-                        # (Fixed agent will use base price due to scalar 0.5)
-                        exp_utilities.append(np.exp(U_0))
-                        labels.append("agent0")
-                        exp_utilities.append(np.exp(U_1))
-                        labels.append("agent1")
-                        
-                        # Always include reject option
-                        exp_utilities.append(np.exp(U_reject))
-                        labels.append("reject")
+                        # Build choice set — integer labels (0=agent0, 1=agent1, 2=reject)
+                        exp_utils = np.array([np.exp(U_0), np.exp(U_1), np.exp(U_reject)])
+                        Probabilities = exp_utils / exp_utils.sum()
 
-                        Probabilities = np.array(exp_utilities) / np.sum(exp_utilities)
-                        labels_array = np.array(labels)
-                        
-                        # Batch sample all choices at once with uniform wage
-                        choices = np.random.choice(labels_array, size=int(d_original), p=Probabilities)
-                        d0 = np.sum(choices == "agent0")
-                        d1 = np.sum(choices == "agent1")
-                        dr = np.sum(choices == "reject")
-                        
+                        choices = np.random.choice(3, size=int(d_original), p=Probabilities)
+                        d0 = np.sum(choices == 0)
+                        d1 = np.sum(choices == 1)
+                        dr = np.sum(choices == 2)
+
                         avg_probabilities = Probabilities
                     
                     # Log trip assignment details (use average values for dynamic wage case)
@@ -410,8 +395,8 @@ class AMoD:
                 self.agent_passenger[0][n][t].extend(pax0)
                 self.agent_passenger[1][n][t].extend(pax1)
 
-                random.Random(self.seed).shuffle(self.agent_passenger[0][n][t])
-                random.Random(self.seed).shuffle(self.agent_passenger[1][n][t])
+                random.shuffle(self.agent_passenger[0][n][t])
+                random.shuffle(self.agent_passenger[1][n][t])
 
                 total_original_demand += d_original
                 total_rejected_demand += dr
@@ -421,7 +406,7 @@ class AMoD:
             for agent_id in [0, 1]:
                 accCurrent = self.agent_acc[agent_id][n][t]
 
-                new_enterq = [pax for pax in self.agent_passenger[agent_id][n][t] if pax.enter()]
+                new_enterq = self.agent_passenger[agent_id][n][t]
                 queueCurrent = self.agent_queue[agent_id][n] + new_enterq
                 self.agent_queue[agent_id][n] = queueCurrent
 

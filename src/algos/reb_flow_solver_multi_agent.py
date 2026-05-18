@@ -1,73 +1,76 @@
 """
-Minimal Rebalancing Cost 
+Minimal Rebalancing Cost
 ------------------------
-This file contains the specifications for the Min Reb Cost problem.
+Solves the minimum-cost rebalancing flow LP via scipy/HiGHS, bypassing PuLP
+model-building overhead (which dominated runtime for these small graphs).
 """
 from collections import defaultdict
-from pulp import LpProblem, LpMinimize, LpVariable, lpSum, LpStatus, CPLEX_PY
+
+import numpy as np
+from scipy.optimize import Bounds, LinearConstraint, linprog, milp
 
 
 def solveRebFlow(env, desiredAcc, agent_id):
-
     t = env.time
     edges = [(i, j) for i, j in env.G.edges]
+    n_edges = len(edges)
 
-    # Map vehicle availability and desired vehicles for each region
-    #accTuple = [(n, int(env.agent_acc[agent_id][n][t+1])) for n in env.agent_acc[agent_id]]
-    acc_init = {n: int(env.agent_acc[agent_id][n][t+1]) for n in env.agent_acc[agent_id]}
-    #acc_init = {n: int(env.acc[n][t+1]) for n in env.acc}
-    desired_vehicles = {n: int(round(desiredAcc[n])) for n in desiredAcc}
+    acc_init = {n: int(env.agent_acc[agent_id][n][t + 1]) for n in env.agent_acc[agent_id]}
+    desired  = {n: int(round(desiredAcc[n])) for n in desiredAcc}
+    region   = list(acc_init.keys())
+    n_reg    = len(region)
 
-    region = [n for n in acc_init]
-    # Time on each edge (used in the objective)
-    time = {(i, j): env.G.edges[i, j]['time'] for i, j in edges}
-    tol = 1e-6
-    
-    def build_model(var_cat):
-        # Define the PuLP problem
-        model = LpProblem("RebalancingFlowMinimization", LpMinimize)
-        
-        # Decision variables: rebalancing flow on each edge
-        rebFlow = {(i, j): LpVariable(f"rebFlow_{i}_{j}", lowBound=0, cat=var_cat) for (i, j) in edges}
+    # Objective: minimise total rebalancing travel time
+    c = np.array([env.G.edges[i, j]['time'] for i, j in edges], dtype=float)
 
-        # Objective: minimize total time (cost) of rebalancing flows
-        model += lpSum(rebFlow[(i, j)] * time[(i, j)] for (i, j) in edges), "TotalRebalanceCost"
-        
-        # Constraints for each region (node)
-        for k in region:
-            # 1. Flow conservation constraint (ensure net inflow/outflow achieves desired vehicle distribution)
-            model += (
-                lpSum(rebFlow[(j, i)]-rebFlow[(i, j)] for (i, j) in edges if j != i and i==k)
-            ) >= desired_vehicles[k] - acc_init[k], f"FlowConservation_{k}"
+    # Constraint matrix  (2*n_reg rows, n_edges cols)
+    # Rows 0..n_reg-1      : flow conservation  (flipped to <=)
+    # Rows n_reg..2*n_reg-1: supply bound        (outflow <= acc)
+    #
+    # Original conservation (>=): inflow[k] - outflow[k] >= desired[k] - acc[k]
+    # Flipped      (<=):          outflow[k] - inflow[k] <= acc[k]   - desired[k]
+    A = np.zeros((2 * n_reg, n_edges))
+    b = np.zeros(2 * n_reg)
 
-            # 2. Rebalancing flows from region i should not exceed the available vehicles in region i
-            model += (
-                lpSum(rebFlow[(i, j)] for (i, j) in edges if i != j and i==k) <= acc_init[k], 
-                f"RebalanceSupply_{k}"
-            )
-        return model, rebFlow
-    
-    model, rebFlow = build_model('Continuous')
-    status = model.solve(CPLEX_PY(msg=False, threads=1, **{"preprocessing.presolve": 0}))
-    if LpStatus[status] != "Optimal":
+    reg_idx = {r: idx for idx, r in enumerate(region)}
+
+    for m, (i, j) in enumerate(edges):
+        if i == j:
+            continue
+        if i in reg_idx:
+            r = reg_idx[i]
+            A[r, m]          += 1   # outflow from i  (conservation)
+            A[n_reg + r, m]   = 1   # supply constraint
+        if j in reg_idx:
+            r = reg_idx[j]
+            A[r, m]          -= 1   # inflow to j     (conservation)
+
+    for idx, r in enumerate(region):
+        b[idx]          = acc_init[r] - desired[r]
+        b[n_reg + idx]  = acc_init[r]
+
+    # LP relaxation
+    res = linprog(c, A_ub=A, b_ub=b, bounds=(0, None), method='highs')
+    if res.status != 0:
         return None
-    else: 
-        fractional = False
-        flow = defaultdict(float)
-        for (i, j) in edges:
-            flow[(i, j)] = rebFlow[(i, j)].varValue
-            if abs(flow[(i, j)] - round(flow[(i, j)])) > tol: 
-                fractional = True
-                break 
-        if fractional:
-            model, rebFlow = build_model('Integer')
-            status = model.solve(CPLEX_PY(msg=False, threads=1, **{"preprocessing.presolve": 0}))
-            if LpStatus[status] != "Optimal":
-                return None
-            else:
-                flow = defaultdict(float)
-                for (i, j) in edges:
-                    flow[(i, j)] = rebFlow[(i, j)].varValue
-        action = [int(round(flow[i,j])) for i,j in env.edges]
-        return action
- 
+
+    x   = res.x
+    tol = 1e-6
+
+    if np.any(np.abs(x - np.round(x)) > tol):
+        # Integer fallback
+        result = milp(
+            c,
+            constraints=LinearConstraint(A, lb=-np.inf, ub=b),
+            integrality=np.ones(n_edges),
+            bounds=Bounds(lb=0),
+        )
+        if result.status != 0:
+            return None
+        x = result.x
+
+    flow = defaultdict(float)
+    for m, (i, j) in enumerate(edges):
+        flow[(i, j)] = x[m]
+
+    return [int(round(flow[i, j])) for i, j in env.edges]
