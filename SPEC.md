@@ -134,7 +134,7 @@ No auxiliary shaping terms initially. If training is unstable, consider adding a
 **Algorithm:** PPO (preferred over A2C for the meta-level due to sparse daily rewards and longer episode horizon).
 
 **Architecture:** MLP (no GCN — daily aggregated stats have no spatial graph structure).
-- Input: daily_state vector (~9 scalars)
+- Input: daily_state vector (7 scalars)
 - Hidden: 2 layers × 128 units, ReLU
 - Actor head: outputs per-region price multiplier vector α_o ∈ ℝ^{N_v}, clamped to [0.5, 2.0] via sigmoid scaling
 - Critic head: scalar value estimate
