@@ -231,6 +231,10 @@ def main():
         '--n_workers', type=int, default=4,
         help='number of parallel episode workers (default: 4)',
     )
+    parser.add_argument(
+        '--grad_reduce', type=str, default='sum', choices=['sum', 'mean'],
+        help='how to combine gradients across workers: sum (default, preserves learning rate) or mean',
+    )
     args = parser.parse_args()
 
     if args.mode != 2:
@@ -357,23 +361,25 @@ def main():
         all_grads   = [r[0] for r in results]
         all_metrics = [r[1] for r in results]
 
-        # Average and apply gradients
+        # Combine and apply gradients
+        reduce_fn = (lambda t: t.sum(0)) if args.grad_reduce == 'sum' else (lambda t: t.mean(0))
+
         for a in [0, 1]:
             if update_actor and all_grads[0][a]['actor'] is not None:
                 model_agents[a].optimizers['a_optimizer'].zero_grad()
                 for name, param in model_agents[a].actor.named_parameters():
                     if name in all_grads[0][a]['actor']:
-                        param.grad = torch.stack(
-                            [g[a]['actor'][name] for g in all_grads]
-                        ).mean(0).to(device)
+                        param.grad = reduce_fn(
+                            torch.stack([g[a]['actor'][name] for g in all_grads])
+                        ).to(device)
                 model_agents[a].optimizers['a_optimizer'].step()
 
             model_agents[a].optimizers['c_optimizer'].zero_grad()
             for name, param in model_agents[a].critic.named_parameters():
                 if name in all_grads[0][a]['critic']:
-                    param.grad = torch.stack(
-                        [g[a]['critic'][name] for g in all_grads]
-                    ).mean(0).to(device)
+                    param.grad = reduce_fn(
+                        torch.stack([g[a]['critic'][name] for g in all_grads])
+                    ).to(device)
             model_agents[a].optimizers['c_optimizer'].step()
 
         # Aggregate episode metrics (mean across workers)
