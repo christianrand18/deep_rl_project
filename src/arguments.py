@@ -283,6 +283,12 @@ class A2CArgumentBuilder:
 			default=False,
 			help="Enable region-specific wage distributions for NYC Manhattan South (default: False)",
 		)
+		parser.add_argument(
+			"--num_days",
+			type=int,
+			default=1,
+			help="Number of simulated days per episode (default: 1). Values > 1 activate multi-day mode.",
+		)
 		return parser
 
 	@classmethod

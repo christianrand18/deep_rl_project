@@ -746,13 +746,19 @@ class AMoD:
         
         self.system_wage_samples = []
         
-        self.agent_obs = {agent_id: (self.agent_acc[agent_id], self.time, 
-                            self.agent_dacc[agent_id], self.demand) 
+        self.agent_obs = {agent_id: (self.agent_acc[agent_id], self.time,
+                            self.agent_dacc[agent_id], self.demand)
             for agent_id in self.agents}
-        
+
         return self.agent_obs
 
-    
+    def reset_day(self):
+        """Partial reset between days in a multi-day episode.
+        Resets vehicle positions, queues, and demand. Brand momentum (when added) will be preserved here.
+        """
+        return self.reset()
+
+
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None, supply_ratio=1,
