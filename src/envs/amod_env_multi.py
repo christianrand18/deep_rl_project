@@ -11,7 +11,7 @@ from sklearn.neighbors import KNeighborsRegressor
 from src.envs.structures import generate_passenger
 
 class AMoD:
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept, wage, use_dynamic_wage_man_south=False, od_price_actions=False):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept, wage, use_dynamic_wage_man_south=False, od_price_actions=False, brand_momentum_lambda=0.9, brand_momentum_gamma=0.0):
         self.scenario = deepcopy(scenario)
         self.od_price_actions = od_price_actions
         self.mode = mode
@@ -192,7 +192,11 @@ class AMoD:
         self.choice_price_mult = choice_price_mult
 
         self.seed = seed
-        
+
+        self.bm_lambda = brand_momentum_lambda
+        self.bm_gamma = brand_momentum_gamma
+        self.brand_momentum = {0: 0.5, 1: 0.5}
+
         # Trip assignment tracking: stores detailed data for each trip
         self.trip_assignments = []
     
@@ -310,14 +314,16 @@ class AMoD:
                         
                         # Vectorized utility calculations for all passengers
                         U_0_batch = (
-                            self.choice_intercept 
-                            - 0.71 * passenger_wages * travel_time_in_hours 
+                            self.choice_intercept
+                            - 0.71 * passenger_wages * travel_time_in_hours
                             - income_effects * self.choice_price_mult * pr0
+                            + self.bm_gamma * self.brand_momentum[0]
                         )
                         U_1_batch = (
-                            self.choice_intercept 
-                            - 0.71 * passenger_wages * travel_time_in_hours 
+                            self.choice_intercept
+                            - 0.71 * passenger_wages * travel_time_in_hours
                             - income_effects * self.choice_price_mult * pr1
+                            + self.bm_gamma * self.brand_momentum[1]
                         )
                         U_reject_batch = np.full(int(d_original), U_reject)
                         
@@ -351,8 +357,8 @@ class AMoD:
                         income_effect = self.wage / self.wage  # Always 1.0
                         
                         # Compute utilities for all agents (same for all passengers)
-                        U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
-                        U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                        U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0 + self.bm_gamma * self.brand_momentum[0]
+                        U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1 + self.bm_gamma * self.brand_momentum[1]
                         U_reject_mean = U_reject
                         
                         # Build choice set
@@ -670,9 +676,23 @@ class AMoD:
         self.trip_assignments = []
         return trips
     
+    def update_brand_momentum(self, served_counts, total_demand):
+        """Update EMA brand momentum at the end of a simulated day.
+
+        Called by the day loop (issue #5). served_counts: {agent_id: int},
+        total_demand: int (all passengers that arrived this day, across both operators).
+        """
+        for agent_id in self.agents:
+            s = served_counts[agent_id] / total_demand if total_demand > 0 else 0.0
+            self.brand_momentum[agent_id] = (
+                self.bm_lambda * self.brand_momentum[agent_id]
+                + (1 - self.bm_lambda) * s
+            )
+
     def reset(self):
         """Reset the episode for multi-agent environment"""
-        
+
+        self.brand_momentum = {0: 0.5, 1: 0.5}
         self.trip_assignments = []
         
         self.agent_acc = {agent_id: defaultdict(dict) for agent_id in self.agents}
