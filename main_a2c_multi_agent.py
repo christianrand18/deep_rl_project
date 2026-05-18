@@ -291,7 +291,7 @@ if not args.test:
                 total_vehicles=args.total_vehicles)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed=args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions, brand_momentum_lambda=args.brand_momentum_lambda, brand_momentum_gamma=args.brand_momentum_gamma)
     
     # Print fixed agent information
     print_multi_train_mode_banner(args.fix_agent)
@@ -448,6 +448,8 @@ if not args.test:
             if i_day > 0:
                 obs = env.reset_day()
                 action_rl = {a: [0.0] * env.nregion for a in [0, 1]}
+            day_served = {0: 0, 1: 0}
+            day_total_demand = 0
             done = False
             step = 0
 
@@ -737,14 +739,19 @@ if not args.test:
                         episode_true_profit[a] += info[a].get("true_profit", 0)
                         episode_adjusted_profit[a] += info[a].get("adjusted_profit", 0)
                         episode_unprofitable_trips[a] += info[a].get("unprofitable_trips", 0)
-                
+                        # Per-day demand for brand momentum update
+                        day_served[a] += info[a]["served_demand"]
+
                 # Track system-level metrics (not agent-specific)
                 episode_rejected_demand += system_info["rejected_demand"]
                 episode_total_demand += system_info["total_demand"]
                 episode_rejection_rates.append(system_info["rejection_rate"])
+                day_total_demand += system_info["total_demand"]
             
                 step += 1
-        
+
+            env.update_brand_momentum(served_counts=day_served, total_demand=day_total_demand)
+
         # Update both agent models after episode and collect training metrics
         grad_norms = {}
         if args.mode not in [3, 4]:
@@ -964,7 +971,12 @@ if not args.test:
             for a in [0, 1]:
                 if a != args.fix_agent:
                     log_dict[f"agent{a}/reward_scale"] = model_agents[a].reward_scale
-        
+
+        # Log brand momentum at end of episode (meaningful when num_days > 1)
+        if args.num_days > 1:
+            log_dict["agent0/brand_momentum"] = env.brand_momentum[0]
+            log_dict["agent1/brand_momentum"] = env.brand_momentum[1]
+
         wandb.log(log_dict)
 
         # Keep metrics for both agents
@@ -1062,7 +1074,7 @@ else:
                 agent0_vehicle_ratio=args.agent0_vehicle_ratio,
                 total_vehicles=args.total_vehicles)
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed=args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions, brand_momentum_lambda=args.brand_momentum_lambda, brand_momentum_gamma=args.brand_momentum_gamma)
     
     # Print fixed agent information
     print_multi_test_mode_banner(args.fix_agent)

@@ -774,9 +774,12 @@ class AMoD:
 
     def reset_day(self):
         """Partial reset between days in a multi-day episode.
-        Resets vehicle positions, queues, and demand. Brand momentum (when added) will be preserved here.
+        Resets vehicle positions, queues, and demand while preserving brand momentum.
         """
-        return self.reset()
+        saved_momentum = dict(self.brand_momentum)
+        obs = self.reset()
+        self.brand_momentum = saved_momentum
+        return obs
 
 
 

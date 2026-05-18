@@ -289,6 +289,18 @@ class A2CArgumentBuilder:
 			default=1,
 			help="Number of simulated days per episode (default: 1). Values > 1 activate multi-day mode.",
 		)
+		parser.add_argument(
+			"--brand_momentum_lambda",
+			type=float,
+			default=0.9,
+			help="EMA decay for brand momentum (default: 0.9). Higher = slower adaptation.",
+		)
+		parser.add_argument(
+			"--brand_momentum_gamma",
+			type=float,
+			default=0.0,
+			help="Strength of brand momentum in MNL utility (default: 0.0 = disabled, reproduces baseline).",
+		)
 		return parser
 
 	@classmethod
