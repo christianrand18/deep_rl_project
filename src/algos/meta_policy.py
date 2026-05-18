@@ -84,6 +84,8 @@ class MetaPolicy(nn.Module):
         old_vals_t = torch.cat(self.val_buf, 0).detach()
 
         advantages = returns_t - old_vals_t
+        adv_mean = advantages.mean().item()
+        adv_std = advantages.std().item() if advantages.numel() > 1 else 0.0
         if advantages.numel() > 1:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
@@ -116,4 +118,9 @@ class MetaPolicy(nn.Module):
         self.val_buf.clear()
         self.rew_buf.clear()
 
-        return {"meta_actor_loss": actor_loss_val, "meta_critic_loss": critic_loss_val}
+        return {
+            "meta_actor_loss": actor_loss_val,
+            "meta_critic_loss": critic_loss_val,
+            "meta_advantage_mean": adv_mean,
+            "meta_advantage_std": adv_std,
+        }

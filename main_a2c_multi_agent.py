@@ -408,6 +408,9 @@ if not args.test:
         )
     accumulator = DailyStatsAccumulator() if meta_policies else None
 
+    if meta_policies and not args.test:
+        wandb.define_metric("day/*", step_metric="meta/global_day")
+
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
 
@@ -830,6 +833,28 @@ if not args.test:
                     for a in [0, 1]
                 }
 
+                # Day-level WandB log (uses meta/global_day as x-axis in custom panels)
+                if not args.test:
+                    global_day = i_episode * args.num_days + i_day
+                    day_log = {
+                        "meta/global_day": global_day,
+                        "meta/episode": i_episode,
+                        "meta/day_in_episode": i_day,
+                        "day/agent0_daily_profit": accumulator.profit[0] / args.reward_scalar,
+                        "day/agent1_daily_profit": accumulator.profit[1] / args.reward_scalar,
+                        "day/agent0_brand_momentum": env.brand_momentum[0],
+                        "day/agent1_brand_momentum": env.brand_momentum[1],
+                    }
+                    if accumulator.total_demand > 0:
+                        day_log["day/agent0_market_share"] = accumulator.served[0] / accumulator.total_demand
+                        day_log["day/agent1_market_share"] = accumulator.served[1] / accumulator.total_demand
+                    if accumulator._price_steps > 0:
+                        day_log["day/agent0_avg_price"] = accumulator._price_sum[0] / accumulator._price_steps
+                        day_log["day/agent1_avg_price"] = accumulator._price_sum[1] / accumulator._price_steps
+                    for _a in meta_policies:
+                        day_log[f"day/agent{_a}_meta_multiplier_mean"] = float(np.mean(meta_multipliers[_a]))
+                    wandb.log(day_log)
+
         # Update both agent models after episode and collect training metrics
         grad_norms = {}
         if args.mode not in [3, 4]:
@@ -866,9 +891,10 @@ if not args.test:
                 }
 
         # Meta-policy: PPO update at end of episode
+        meta_metrics = {}
         if meta_policies:
             for _a in meta_policies:
-                meta_policies[_a].update()
+                meta_metrics[_a] = meta_policies[_a].update()
 
         # Get total vehicles for verification (returns dict with {agent_id: total_vehicles})
         total_vehicles = env.get_total_vehicles()
@@ -1043,6 +1069,13 @@ if not args.test:
         for agent_id in [0, 1]:
             if len(episode_logprobs[agent_id]) > 0 and agent_id != args.fix_agent:
                 log_dict[f"agent{agent_id}/mean_log_prob"] = np.mean(episode_logprobs[agent_id])
+
+        # Add meta-policy training metrics (episode-level, from PPO update)
+        for _a, metrics in meta_metrics.items():
+            log_dict[f"agent{_a}/meta_actor_loss"] = metrics.get("meta_actor_loss", 0)
+            log_dict[f"agent{_a}/meta_critic_loss"] = metrics.get("meta_critic_loss", 0)
+            log_dict[f"agent{_a}/meta_advantage_mean"] = metrics.get("meta_advantage_mean", 0)
+            log_dict[f"agent{_a}/meta_advantage_std"] = metrics.get("meta_advantage_std", 0)
         
         # Add warmup tracking
         if args.critic_warmup_episodes > 0:
