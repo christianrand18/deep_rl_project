@@ -13,8 +13,7 @@ See `SPEC.md` for the full architecture. See `litterature/` for the base paper a
 
 ## Key Files
 
-- `main_a2c_multi_agent.py` — existing single-day training entry point (do not break)
-- `main_hrl.py` — new HRL training entry point (to be created)
+- `main_a2c_multi_agent.py` — main training entry point (do not break existing functionality)
 - `src/envs/amod_env_multi.py` — AMoD environment (multi-operator)
 - `src/algos/a2c_gnn_multi_agent.py` — low-level A2C+GCN agent
 - `src/algos/meta_policy.py` — meta-policy (to be created)
@@ -30,3 +29,7 @@ See `SPEC.md` for the full architecture. See `litterature/` for the base paper a
 - `γ = 0` in the brand momentum utility term must exactly reproduce baseline choice model behavior
 - Daily stats normalization: use the same `reward_scalar` as the low-level policy
 - WandB logging: log both low-level (per-step) and meta-level (per-day) metrics separately
+
+## Changelog
+
+- Add significant changes to the changelog. Keep it short and clean, and group things together to keep it tight.

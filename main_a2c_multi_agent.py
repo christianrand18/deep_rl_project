@@ -25,7 +25,7 @@ from src.helpers.console_output import (
     print_od_price_observe_notice,
 )
 from src.misc.utils import dictsum, nestdictsum, DailyStatsAccumulator
-from src.algos.meta_policy import MetaPolicy
+from src.algos.meta_policy import MetaPolicy, HeuristicMetaPolicy
 
 # Load environment variables from .env file
 load_dotenv()
@@ -390,26 +390,35 @@ if not args.test:
     def _meta_agent_set(args):
         if args.meta_policy == "none":
             return set()
-        if args.meta_policy == "one":
+        if args.meta_policy in ("one", "heuristic"):
             return {args.meta_agent}
         return {0, 1}
 
     meta_agent_set = _meta_agent_set(args)
     meta_policies = {}
     for _a in meta_agent_set:
-        meta_policies[_a] = MetaPolicy(
-            obs_dim=7,
-            n_regions=env.nregion,
-            hidden_dim=args.meta_hidden_dim,
-            lr=args.meta_lr,
-            gamma=args.meta_gamma,
-            clip_eps=args.meta_clip_eps,
-            n_ppo_epochs=args.meta_ppo_epochs,
-            device=device,
-        )
-    accumulator = DailyStatsAccumulator() if meta_policies else None
+        if args.meta_policy == "heuristic":
+            meta_policies[_a] = HeuristicMetaPolicy(
+                n_regions=env.nregion,
+                heuristic_name=args.meta_heuristic,
+                num_days=args.num_days,
+            )
+        else:
+            meta_policies[_a] = MetaPolicy(
+                obs_dim=7,
+                n_regions=env.nregion,
+                hidden_dim=args.meta_hidden_dim,
+                lr=args.meta_lr,
+                gamma=args.meta_gamma,
+                clip_eps=args.meta_clip_eps,
+                n_ppo_epochs=args.meta_ppo_epochs,
+                device=device,
+            )
+    # Accumulator runs whenever multi-day or meta is active — enables per-day WandB logging
+    # for drift detection in no-meta multi-day runs.
+    accumulator = DailyStatsAccumulator() if (meta_policies or args.num_days > 1) else None
 
-    if meta_policies and not args.test:
+    if accumulator is not None and not args.test:
         wandb.define_metric("day/*", step_metric="meta/global_day")
 
     for i_episode in epochs:
@@ -483,12 +492,17 @@ if not args.test:
                 action_rl = {a: [0.0] * env.nregion for a in [0, 1]}
             day_served = {0: 0, 1: 0}
             day_total_demand = 0
+            # Snapshot episode_reward at day start so we can compute per-day step-reward sum
+            # for reward-attribution debug logging (compare to day/agent{a}_daily_profit).
+            day_reward_start = dict(episode_reward)
             done = False
             step = 0
 
-            # Meta-policy: reset accumulator for this day and select daily multipliers
-            if meta_policies:
+            # Reset daily accumulator (used for both meta-policy state and per-day WandB logs)
+            if accumulator is not None:
                 accumulator.reset(env)
+            # Meta-policy: select daily multipliers
+            if meta_policies:
                 for _a in meta_policies:
                     meta_multipliers[_a] = meta_policies[_a].select_action(meta_obs[_a])
 
@@ -839,7 +853,7 @@ if not args.test:
                 episode_rejection_rates.append(system_info["rejection_rate"])
                 day_total_demand += system_info["total_demand"]
 
-                if meta_policies:
+                if accumulator is not None:
                     accumulator.update(info, system_info, submitted_prices)
 
                 step += 1
@@ -848,8 +862,13 @@ if not args.test:
 
             if meta_policies:
                 for _a in meta_policies:
-                    meta_policies[_a].store_reward(accumulator.profit[_a])
-                # Compute meta_obs for the next day using today's stats + updated M_o(d)
+                    # Net-of-rebalancing daily profit, matching the low-level reward signal
+                    # (revenue − operating_cost − rebalancing_cost).
+                    meta_policies[_a].store_reward(accumulator.profit[_a] - accumulator.reb_cost[_a])
+            if accumulator is not None:
+                # Update momentum snapshot to include today's M_o(d), then build meta_obs
+                # for the next day. Even with no meta, we still build the obs vector so
+                # per-day logging keeps full state available.
                 accumulator.momentum_snapshot = dict(env.brand_momentum)
                 meta_obs = {
                     a: accumulator.daily_state(a, i_day + 1, args.num_days, args.reward_scalar)
@@ -865,8 +884,14 @@ if not args.test:
                         "meta/day_in_episode": i_day,
                         "day/agent0_daily_profit": accumulator.profit[0] / args.reward_scalar,
                         "day/agent1_daily_profit": accumulator.profit[1] / args.reward_scalar,
+                        # Meta reward = profit − rebalancing_cost (matches low-level reward signal).
+                        # Should equal day/agent{a}_step_reward_sum if accounting is consistent.
+                        "day/agent0_meta_reward": (accumulator.profit[0] - accumulator.reb_cost[0]) / args.reward_scalar,
+                        "day/agent1_meta_reward": (accumulator.profit[1] - accumulator.reb_cost[1]) / args.reward_scalar,
                         "day/agent0_brand_momentum": env.brand_momentum[0],
                         "day/agent1_brand_momentum": env.brand_momentum[1],
+                        "day/agent0_step_reward_sum": (episode_reward[0] - day_reward_start[0]) / args.reward_scalar,
+                        "day/agent1_step_reward_sum": (episode_reward[1] - day_reward_start[1]) / args.reward_scalar,
                     }
                     if accumulator.total_demand > 0:
                         day_log["day/agent0_market_share"] = accumulator.served[0] / accumulator.total_demand

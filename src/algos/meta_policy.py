@@ -124,3 +124,42 @@ class MetaPolicy(nn.Module):
             "meta_advantage_mean": adv_mean,
             "meta_advantage_std": adv_std,
         }
+
+
+class HeuristicMetaPolicy:
+    """Deterministic meta-policy for sanity checks. No learning.
+
+    Supports a small set of fixed strategies, selected by `heuristic_name`:
+      - "const_1":   α = 1.0 every day (should be a no-op equivalent to --meta_policy none).
+      - "const_05":  α = 0.5 every day (always undercut).
+      - "const_2":   α = 2.0 every day (always overprice, hits new upper bound).
+      - "schedule_undercut_exploit": α = 0.5 for first half of episode days, α = 1.5 thereafter.
+    """
+
+    def __init__(self, n_regions: int, heuristic_name: str, num_days: int):
+        self.n_regions = n_regions
+        self.heuristic_name = heuristic_name
+        self.num_days = max(1, num_days)
+        self._day_idx = 0  # within-episode counter; wraps every num_days calls
+
+    def select_action(self, obs):
+        d = self._day_idx
+        if self.heuristic_name == "const_1":
+            alpha = 1.0
+        elif self.heuristic_name == "const_05":
+            alpha = 0.5
+        elif self.heuristic_name == "const_2":
+            alpha = 2.0
+        elif self.heuristic_name == "schedule_undercut_exploit":
+            half = self.num_days // 2
+            alpha = 0.5 if d < half else 1.5
+        else:
+            raise ValueError(f"Unknown heuristic: {self.heuristic_name}")
+        self._day_idx = (self._day_idx + 1) % self.num_days
+        return np.full(self.n_regions, alpha, dtype=np.float32)
+
+    def store_reward(self, reward: float):
+        pass
+
+    def update(self) -> dict:
+        return {}

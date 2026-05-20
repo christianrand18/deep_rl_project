@@ -311,9 +311,17 @@ class A2CArgumentBuilder:
 			"--meta_policy",
 			type=str,
 			default="none",
-			choices=["none", "one", "both"],
+			choices=["none", "one", "both", "heuristic"],
 			help="Meta-policy mode: 'none' (disabled), 'one' (single agent, see --meta_agent), "
-			     "'both' (both agents). Default: none.",
+			     "'both' (both agents), 'heuristic' (deterministic single-agent, see --meta_heuristic). "
+			     "Default: none.",
+		)
+		parser.add_argument(
+			"--meta_heuristic",
+			type=str,
+			default="const_1",
+			choices=["const_1", "const_05", "const_2", "schedule_undercut_exploit"],
+			help="Heuristic policy name when --meta_policy heuristic. Default: const_1.",
 		)
 		parser.add_argument(
 			"--meta_agent",
