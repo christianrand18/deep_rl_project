@@ -24,10 +24,10 @@ class MetaPolicy(nn.Module):
             nn.Linear(obs_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
         )
-        # Actor: mean ∈ (0, 2) via 2*sigmoid; fixed std=0.1 for exploration
+        # Actor: mean ∈ (0, 2) via 2*sigmoid; learnable log_std for exploration
         self.actor_head = nn.Linear(hidden_dim, n_regions)
         self.critic_head = nn.Linear(hidden_dim, 1)
-        self.log_std = nn.Parameter(torch.full((n_regions,), -2.3))  # std ≈ 0.1 initially
+        self.log_std = nn.Parameter(torch.full((n_regions,), -0.6931))  # std ≈ 0.5 initially
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 

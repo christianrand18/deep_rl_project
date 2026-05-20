@@ -439,7 +439,8 @@ if not args.test:
         episode_true_profit = {0: 0, 1: 0}
         episode_adjusted_profit = {0: 0, 1: 0}
         episode_unprofitable_trips = {0: 0, 1: 0}
-        actions_price = {0: [], 1: []}  # Track price scalars during episode
+        actions_price = {0: [], 1: []}  # Track price scalars during episode (pre-meta)
+        actions_effective_price = {0: [], 1: []}  # Track effective price scalars (post-meta clip)
         
         # Track concentration parameters during episode (different structures per mode)
         if env.mode == 0:
@@ -616,14 +617,23 @@ if not args.test:
                                 episode_max_concentration_beta[a] = max(episode_max_concentration_beta[a], np.max(concentrations[a][0, :, 1]))
 
                     # Apply meta multipliers to mode 1 pricing actions
+                    # Low-level scalar ρ ∈ [0, 1] (env scales by 2 → factor [0, 2])
+                    # Meta multiplier α ∈ [0, 2]; combined α·ρ clipped to [0, 2] → factor [0, 4]
                     if meta_policies:
                         for _a in [0, 1]:
                             if _a in meta_policies:
                                 arr = np.array(action_rl[_a])
                                 if args.od_price_actions:
-                                    action_rl[_a] = np.clip(meta_multipliers[_a][:, None] * arr, 0.0, 1.0)
+                                    action_rl[_a] = np.clip(meta_multipliers[_a][:, None] * arr, 0.0, 2.0)
                                 else:
-                                    action_rl[_a] = np.clip(meta_multipliers[_a] * arr, 0.0, 1.0)
+                                    action_rl[_a] = np.clip(meta_multipliers[_a] * arr, 0.0, 2.0)
+
+                    # Track effective prices (post-meta multiplier) during episode (mode 1)
+                    for a in [0, 1]:
+                        if a == args.fix_agent:
+                            actions_effective_price[a].append(1.0)
+                        else:
+                            actions_effective_price[a].append(np.mean(2 * np.array(action_rl[a])))
 
                     # Matching update (global step)
                     env.matching_update()
@@ -701,15 +711,27 @@ if not args.test:
                                 episode_max_concentration_dirichlet[a] = max(episode_max_concentration_dirichlet[a], np.max(concentrations[a][0, :, 2]))
                         
                     # Apply meta multipliers to mode 2 pricing actions (price column only)
+                    # Low-level scalar ρ ∈ [0, 1] (env scales by 2 → factor [0, 2])
+                    # Meta multiplier α ∈ [0, 2]; combined α·ρ clipped to [0, 2] → factor [0, 4]
                     if meta_policies:
                         for _a in [0, 1]:
                             if _a in meta_policies:
                                 if args.od_price_actions:
                                     action_rl[_a][:, :env.nregion] = np.clip(
-                                        meta_multipliers[_a][:, None] * action_rl[_a][:, :env.nregion], 0.0, 1.0)
+                                        meta_multipliers[_a][:, None] * action_rl[_a][:, :env.nregion], 0.0, 2.0)
                                 else:
                                     action_rl[_a][:, 0] = np.clip(
-                                        meta_multipliers[_a] * action_rl[_a][:, 0], 0.0, 1.0)
+                                        meta_multipliers[_a] * action_rl[_a][:, 0], 0.0, 2.0)
+
+                    # Track effective prices (post-meta multiplier) during episode (mode 2)
+                    for a in [0, 1]:
+                        if a == args.fix_agent:
+                            actions_effective_price[a].append(1.0)
+                        else:
+                            if args.od_price_actions:
+                                actions_effective_price[a].append(np.mean(2 * np.array(action_rl[a])[:, :env.nregion]))
+                            else:
+                                actions_effective_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
 
                     # --- Desired Acc computation ---
                     # Compute desired accumulation for all agents
@@ -905,9 +927,11 @@ if not args.test:
 
         # Calculate mean price scalar per agent (for modes 1 and 2)
         mean_price_scalar = {0: 0, 1: 0}
+        mean_effective_price_scalar = {0: 0, 1: 0}
         if env.mode != 0:
             for a in [0, 1]:
                 mean_price_scalar[a] = np.mean(actions_price[a]) if len(actions_price[a]) > 0 else 0
+                mean_effective_price_scalar[a] = np.mean(actions_effective_price[a]) if len(actions_effective_price[a]) > 0 else 0
 
         # Calculate concentration statistics per agent (mode-specific)
         if env.mode == 0:
@@ -1023,6 +1047,8 @@ if not args.test:
         if env.mode != 0:
             log_dict["agent0/mean_price_scalar"] = mean_price_scalar[0]
             log_dict["agent1/mean_price_scalar"] = mean_price_scalar[1]
+            log_dict["agent0/mean_effective_price_scalar"] = mean_effective_price_scalar[0]
+            log_dict["agent1/mean_effective_price_scalar"] = mean_effective_price_scalar[1]
         
         # Add concentration metrics (mode-specific)
         if env.mode == 0:
