@@ -143,7 +143,7 @@ No auxiliary shaping terms initially. If training is unstable, consider adding a
 The meta-policy outputs a price multiplier vector α_o. At each low-level timestep, the effective price is:
 
 ```
-p_effective_{i,j,o} = clamp(α_o[i] · ρ_o[i], 0, 2) · p̄_{i,j}
+p_effective_{i,j,o} = clamp(α_o[i] · ρ_o[i], 0, 4) · p̄_{i,j}
 ```
 
 where ρ_o[i] is the low-level policy's origin-based price scalar and p̄_{i,j} is the reference price. The multiplier applies per origin region.

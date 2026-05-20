@@ -19,6 +19,11 @@ See `SPEC.md` for the full architecture. See `litterature/` for the base paper a
 - `src/algos/a2c_gnn_multi_agent.py` — low-level A2C+GCN agent
 - `src/algos/meta_policy.py` — meta-policy (to be created)
 
+## Skills
+
+- `.claude/skills/wandb-results/` — reading and interpreting experiment results from W&B
+- `.claude/skills/batch-jobs/` — creating LSF batch job scripts for HPC experiments
+
 ## Conventions
 
 - All new HRL behavior is opt-in via flags; existing `main_a2c_multi_agent.py` behavior must remain unchanged
