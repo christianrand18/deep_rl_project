@@ -272,6 +272,7 @@ if not args.test:
         entity="bertram-hage-danmarks-tekniske-universitet-dtu",
         project="deep_RL_project",
         name=args.checkpoint_path,
+        group=args.wandb_group,
         config=args,
     )
 

@@ -107,6 +107,12 @@ class A2CArgumentBuilder:
 			help="name of checkpoint file to save/load (default: A2C)",
 		)
 		parser.add_argument(
+			"--wandb_group",
+			type=str,
+			default=None,
+			help="WandB group name to cluster related runs (default: None)",
+		)
+		parser.add_argument(
 			"--load",
 			action="store_true",
 			default=False,
