@@ -113,6 +113,18 @@ class A2CArgumentBuilder:
 			help="WandB group name to cluster related runs (default: None)",
 		)
 		parser.add_argument(
+			"--low_level_scalar_min",
+			type=float,
+			default=0.0,
+			help="Lower bound for meta-controlled agent's pre-meta price scalar (rescale Beta sample to [min, max] before meta apply). Default 0.0 = unchanged.",
+		)
+		parser.add_argument(
+			"--low_level_scalar_max",
+			type=float,
+			default=1.0,
+			help="Upper bound for meta-controlled agent's pre-meta price scalar. Default 1.0 = unchanged.",
+		)
+		parser.add_argument(
 			"--load",
 			action="store_true",
 			default=False,

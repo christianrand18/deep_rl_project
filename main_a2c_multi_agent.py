@@ -631,6 +631,13 @@ if not args.test:
                                 episode_min_concentration_beta[a] = min(episode_min_concentration_beta[a], np.min(concentrations[a][0, :, 1]))
                                 episode_max_concentration_beta[a] = max(episode_max_concentration_beta[a], np.max(concentrations[a][0, :, 1]))
 
+                    # Bound the meta-controlled agent's pre-meta scalar to [min, max]
+                    # (ablation: limits how much the low-level can compensate against α)
+                    if meta_policies and (args.low_level_scalar_min > 0.0 or args.low_level_scalar_max < 1.0):
+                        lo, hi = args.low_level_scalar_min, args.low_level_scalar_max
+                        for _a in meta_policies:
+                            action_rl[_a] = lo + (hi - lo) * np.array(action_rl[_a])
+
                     # Apply meta multipliers to mode 1 pricing actions
                     # Low-level scalar ρ ∈ [0, 1] (env scales by 2 → factor [0, 2])
                     # Meta multiplier α ∈ [0, 2]; combined α·ρ clipped to [0, 2] → factor [0, 4]
@@ -725,6 +732,16 @@ if not args.test:
                                 episode_min_concentration_dirichlet[a] = min(episode_min_concentration_dirichlet[a], np.min(concentrations[a][0, :, 2]))
                                 episode_max_concentration_dirichlet[a] = max(episode_max_concentration_dirichlet[a], np.max(concentrations[a][0, :, 2]))
                         
+                    # Bound the meta-controlled agent's pre-meta scalar to [min, max]
+                    # (ablation: limits how much the low-level can compensate against α)
+                    if meta_policies and (args.low_level_scalar_min > 0.0 or args.low_level_scalar_max < 1.0):
+                        lo, hi = args.low_level_scalar_min, args.low_level_scalar_max
+                        for _a in meta_policies:
+                            if args.od_price_actions:
+                                action_rl[_a][:, :env.nregion] = lo + (hi - lo) * np.array(action_rl[_a][:, :env.nregion])
+                            else:
+                                action_rl[_a][:, 0] = lo + (hi - lo) * np.array(action_rl[_a][:, 0])
+
                     # Apply meta multipliers to mode 2 pricing actions (price column only)
                     # Low-level scalar ρ ∈ [0, 1] (env scales by 2 → factor [0, 2])
                     # Meta multiplier α ∈ [0, 2]; combined α·ρ clipped to [0, 2] → factor [0, 4]

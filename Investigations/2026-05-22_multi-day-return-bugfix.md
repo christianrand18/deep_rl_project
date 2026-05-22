@@ -66,6 +66,10 @@ The compensation effect is worth flagging on its own because it could make the t
 
 **Why this matters.** When the meta tries to undercut to build brand, the low-level partially undoes it, so the effective price moves less than intended. This could attenuate the meta's gradient and dampen the strategic pricing variation we want the meta to learn. The post-fix runs will show how much of this survives a cleaner training signal.
 
+## Bounded-ρ ablation (in flight)
+
+Adding α to the low-level observation would actually make compensation *worse*, not better — a per-day-greedy low-level would learn to cancel α exactly. The structural check is to bound how much the low-level can deviate. Added `--low_level_scalar_min/max` and launched one HPC run at ρ ∈ [0.4, 0.6] (factor ±20% from neutral), γ=5, meta_policy=one, 25k episodes (`sanity_bound_d7_g5_meta_one.sh`). If the meta now produces visible strategic multipliers and a profit edge, compensation was meaningfully dampening the gradient. If not, bottleneck is elsewhere (likely the per-region meta action with only 7 transitions per PPO update).
+
 ## Key takeaways
 
 - ✅ The new HRL components are individually correct: wrapper, EMA, action interface, reward attribution.
