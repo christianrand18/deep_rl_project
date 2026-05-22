@@ -256,7 +256,7 @@ class A2C(nn.Module):
         else:
             return action_array
     
-    def training_step(self, update_actor=True):
+    def training_step(self, update_actor=True, max_steps=None):
         R = 0
         saved_actions = self.saved_actions
         policy_losses = [] # list to save actor (policy) loss
@@ -266,9 +266,20 @@ class A2C(nn.Module):
         # Normalize rewards (same as single agent)
         scaled_rewards = self.rewards
 
-        # calculate the true value using scaled rewards
-        for r in scaled_rewards[::-1]:
-            # calculate the discounted value
+        # If max_steps is not provided, treat the whole buffer as one trajectory
+        # (preserves single-day baseline behavior).
+        if max_steps is None:
+            max_steps = len(scaled_rewards) if scaled_rewards else 1
+
+        # Calculate the true value using scaled rewards.
+        # Reset R at each day boundary: env.reset_day re-initializes fleet positions,
+        # so the action at step (k*max_steps - 1) cannot causally affect the reward at
+        # step (k*max_steps). Treating each day's last step as terminal prevents the
+        # value target from leaking across day boundaries.
+        for i, r in enumerate(scaled_rewards[::-1]):
+            chrono_idx = len(scaled_rewards) - 1 - i
+            if (chrono_idx + 1) % max_steps == 0:  # last step of a day → terminal
+                R = 0
             R = r + self.gamma * R
             returns.insert(0, R)
 

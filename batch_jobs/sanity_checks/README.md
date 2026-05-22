@@ -8,3 +8,13 @@ Scripts (HPC, 25k episodes each):
 - d2: γ=5, heuristic schedule — exploitation at high γ
 
 Phase A (multi-day wrapper reproducibility) and Phase C (action interface) are run locally — see top-level plan.
+
+## Post-bugfix re-runs
+
+After fixing the day-boundary terminal handling in the A2C return computation (CHANGELOG 2026-05-20), the 5 main configs are re-run to validate that per-day metrics now match the converged single-day baseline:
+
+- bugfix_d7_g0_nometa: validation control — should match single-day baseline per-day
+- bugfix_d7_g1_nometa: re-run of b1 with fix
+- bugfix_d7_g5_nometa: re-run of b2 with fix
+- bugfix_d7_g1_schedule: re-run of d1 with fix
+- bugfix_d7_g5_schedule: re-run of d2 with fix

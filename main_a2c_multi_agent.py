@@ -925,7 +925,7 @@ if not args.test:
                     model_agents[a].rewards = []
                     model_agents[a].saved_actions = []
                 else:
-                    grad_norms[a] = model_agents[a].training_step(update_actor=update_actor)  # update model after episode and get metrics
+                    grad_norms[a] = model_agents[a].training_step(update_actor=update_actor, max_steps=args.max_steps)  # update model after episode and get metrics
         else:
             # Baseline modes (mode 3 or 4): no training, return dummy metrics for both agents
             for a in [0, 1]:

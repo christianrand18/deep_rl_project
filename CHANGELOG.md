@@ -2,6 +2,7 @@
 
 ## 2026-05-20
 
+- Treat each day's last step as terminal in the low-level A2C return computation — `env.reset_day()` re-initializes fleet positions, so cross-day rewards don't causally depend on prior-day actions. Previously the discounted return leaked across day boundaries, adding variance and degrading multi-day learning by ~40% per-day profit vs single-day baseline.
 - Subtract rebalancing cost from meta-policy reward — aligns the meta objective with the low-level reward signal (revenue − operating_cost − rebalancing_cost) so the two levels don't optimize against each other.
 - Add Claude skills for wandb-results and batch-jobs — speeds up common workflows around inspecting results and creating HPC jobs.
 - Add round-2 experiment job scripts and batch jobs for LSF — needed to launch the next sweep on the HPC cluster.
