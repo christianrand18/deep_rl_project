@@ -352,6 +352,9 @@ class A2CArgumentBuilder:
 			help="PPO clip epsilon for meta-policy (default: 0.2).")
 		parser.add_argument("--meta_ppo_epochs", type=int, default=4,
 			help="Number of PPO epochs per meta-policy update (default: 4).")
+		parser.add_argument("--reb_solver", type=str, default="ortools",
+			choices=["ortools", "pulp"],
+			help="Rebalancing LP backend: ortools (fast min-cost-flow, default) or pulp (legacy CPLEX).")
 		return parser
 
 	@classmethod

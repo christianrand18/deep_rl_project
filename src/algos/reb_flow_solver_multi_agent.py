@@ -1,10 +1,88 @@
 """
-Minimal Rebalancing Cost 
+Minimal Rebalancing Cost
 ------------------------
 This file contains the specifications for the Min Reb Cost problem.
 """
 from collections import defaultdict
+import numpy as np
 from pulp import LpProblem, LpMinimize, LpVariable, lpSum, LpStatus, CPLEX_PY
+from ortools.graph.python import min_cost_flow as _ortools_mcf
+
+
+# Scale factor for converting float edge times to integer costs (or-tools requires ints).
+# 1e6 keeps 6 decimal digits of precision — plenty for travel-time-like values.
+_COST_SCALE = 1_000_000
+
+
+def solveRebFlow_ortools(env, desiredAcc, agent_id):
+    """Min-cost-flow formulation of the rebalancing LP, solved via or-tools."""
+
+    t = env.time
+    regions = list(env.agent_acc[agent_id].keys())
+    n = len(regions)
+    idx = {r: i for i, r in enumerate(regions)}
+
+    acc_init = np.array(
+        [int(env.agent_acc[agent_id][r][t + 1]) for r in regions], dtype=np.int64
+    )
+    desired = np.array(
+        [int(round(desiredAcc[r])) for r in regions], dtype=np.int64
+    )
+
+    # Node ids: region i -> arrival node 2i, dispatch node 2i+1, sink = 2n
+    sink = 2 * n
+    total_supply = int(acc_init.sum())
+
+    g_edges = [(i, j) for i, j in env.G.edges if i != j]
+    n_reb = len(g_edges)
+    n_arcs = n + n_reb + n  # internal arrival->dispatch + reb + slack-to-sink
+
+    tails = np.empty(n_arcs, dtype=np.int64)
+    heads = np.empty(n_arcs, dtype=np.int64)
+    caps = np.empty(n_arcs, dtype=np.int64)
+    costs = np.empty(n_arcs, dtype=np.int64)
+
+    # Block A: k_a -> k_d, cap = acc_init[k], cost = 0  (outflow cap)
+    tails[:n] = 2 * np.arange(n, dtype=np.int64)
+    heads[:n] = 2 * np.arange(n, dtype=np.int64) + 1
+    caps[:n] = acc_init
+    costs[:n] = 0
+
+    # Block B: i_d -> j_a for each reb edge, cap = total_supply, cost = scaled time
+    off = n
+    for k, (i, j) in enumerate(g_edges):
+        tails[off + k] = 2 * idx[i] + 1
+        heads[off + k] = 2 * idx[j]
+        caps[off + k] = total_supply
+        costs[off + k] = int(round(env.G.edges[i, j]['time'] * _COST_SCALE))
+
+    # Block C: k_a -> sink (slack), cap = total_supply, cost = 0
+    off = n + n_reb
+    tails[off:] = 2 * np.arange(n, dtype=np.int64)
+    heads[off:] = sink
+    caps[off:] = total_supply
+    costs[off:] = 0
+
+    smcf = _ortools_mcf.SimpleMinCostFlow()
+    arc_ids = smcf.add_arcs_with_capacity_and_unit_cost(tails, heads, caps, costs)
+
+    # Supplies: arrival side has (acc - desired); dispatch nodes are zero;
+    # sink absorbs the global excess.
+    node_supplies = np.zeros(2 * n + 1, dtype=np.int64)
+    node_supplies[0:2 * n:2] = acc_init - desired  # arrival nodes
+    node_supplies[sink] = -int((acc_init - desired).sum())
+    smcf.set_nodes_supplies(np.arange(2 * n + 1, dtype=np.int64), node_supplies)
+
+    status = smcf.solve()
+    if status != smcf.OPTIMAL:
+        return None
+
+    # Read reb-arc flows back (block B).
+    flow_by_edge = {}
+    for k, (i, j) in enumerate(g_edges):
+        flow_by_edge[(i, j)] = smcf.flow(arc_ids[n + k])
+
+    return [0 if i == j else flow_by_edge.get((i, j), 0) for i, j in env.edges]
 
 
 def solveRebFlow(env, desiredAcc, agent_id):

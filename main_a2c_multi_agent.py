@@ -10,7 +10,7 @@ from tqdm import trange
 
 from src.arguments import A2CArgumentBuilder
 from src.algos.a2c_gnn_multi_agent import A2C
-from src.algos.reb_flow_solver_multi_agent import solveRebFlow
+from src.algos.reb_flow_solver_multi_agent import solveRebFlow, solveRebFlow_ortools
 from src.envs.amod_env_multi import Scenario, AMoD
 from src.helpers.console_output import (
     print_critic_warmup_banner,
@@ -57,6 +57,9 @@ if args.od_price_actions and not args.od_price_observe:
 # Set device
 args.cuda = args.cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
+
+# Pick rebalancing solver
+solveRebFlow = solveRebFlow_ortools if args.reb_solver == "ortools" else solveRebFlow
 
 
 def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_episodes, mode, fix_agent=2, job_id=None):

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-24
+
+- Speedup: Add or-tools min-cost-flow rebalancing solver (`solveRebFlow_ortools`, default via `--reb_solver ortools`).
+- Speedup: Replace per-call `random.Random(self.seed).shuffle(...)` in `match_step_simple` with a stateful RNG cached at env init.
+
 ## 2026-05-20
 
 - Treat each day's last step as terminal in the low-level A2C return computation — `env.reset_day()` re-initializes fleet positions, so cross-day rewards don't causally depend on prior-day actions. Previously the discounted return leaked across day boundaries, adding variance and degrading multi-day learning by ~40% per-day profit vs single-day baseline.

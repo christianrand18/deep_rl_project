@@ -192,6 +192,7 @@ class AMoD:
         self.choice_price_mult = choice_price_mult
 
         self.seed = seed
+        self._shuffle_rng = random.Random(seed)
 
         self.bm_lambda = brand_momentum_lambda
         self.bm_gamma = brand_momentum_gamma
@@ -416,8 +417,8 @@ class AMoD:
                 self.agent_passenger[0][n][t].extend(pax0)
                 self.agent_passenger[1][n][t].extend(pax1)
 
-                random.Random(self.seed).shuffle(self.agent_passenger[0][n][t])
-                random.Random(self.seed).shuffle(self.agent_passenger[1][n][t])
+                self._shuffle_rng.shuffle(self.agent_passenger[0][n][t])
+                self._shuffle_rng.shuffle(self.agent_passenger[1][n][t])
 
                 total_original_demand += d_original
                 total_rejected_demand += dr

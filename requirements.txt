@@ -10,3 +10,4 @@ tqdm==4.67.1
 wandb==0.22.0
 cplex==22.1.2.1
 pytest==9.0.3
+ortools==9.15.6755
