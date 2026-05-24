@@ -224,48 +224,39 @@ class AMoD:
                 total_rejected_demand += d_reject
 
             accCurrent = self.acc[n][t]
-            new_enterq = [pax for pax in self.passenger[n][t] if pax.enter()]
+            new_enterq = self.passenger[n][t]
             queueCurrent = self.queue[n] + new_enterq
             self.queue[n] = queueCurrent
             matched_leave_index = []
 
             for i, pax in enumerate(queueCurrent):
                 if accCurrent > 0:
-                    accept = pax.match(t)
-                    if accept:
-                        matched_leave_index.append(i)
-                        accCurrent -= 1
-                        arr_t = t + self.demandTime[pax.origin, pax.destination][t]
-                        self.paxFlow[pax.origin, pax.destination][arr_t] += 1
+                    matched_leave_index.append(i)
+                    accCurrent -= 1
+                    arr_t = t + self.demandTime[pax.origin, pax.destination][t]
+                    self.paxFlow[pax.origin, pax.destination][arr_t] += 1
 
-                        wait_t = pax.wait_time
-                        self.paxWait[pax.origin, pax.destination].append(wait_t)
+                    wait_t = pax.wait_time
+                    self.paxWait[pax.origin, pax.destination].append(wait_t)
 
-                        self.dacc[pax.destination][arr_t] += 1
+                    self.dacc[pax.destination][arr_t] += 1
 
-                        self.servedDemand[pax.origin, pax.destination][t] += 1
+                    self.servedDemand[pax.origin, pax.destination][t] += 1
 
-                        trip_revenue = pax.price
-                        trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
+                    trip_revenue = pax.price
+                    trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
 
-                        # Calculate profitability-aware reward
-                        base_reward = trip_revenue - trip_cost
+                    base_reward = trip_revenue - trip_cost
 
-                        self.reward += base_reward
+                    self.reward += base_reward
 
-                        self.ext_reward[n] += max(0, trip_cost)
+                    self.ext_reward[n] += max(0, trip_cost)
 
-                        self.info['revenue'] += trip_revenue
-                        self.info['served_demand'] += 1
-                        self.info['operating_cost'] += trip_cost
-                        self.info['served_waiting'] += wait_t
-                        self.info['true_profit'] += base_reward
-
-                    else:
-                        if pax.unmatched_update():
-                            matched_leave_index.append(i)
-                            self.unservedDemand[pax.origin, pax.destination][t] += 1
-                            self.info['unserved_demand'] += 1
+                    self.info['revenue'] += trip_revenue
+                    self.info['served_demand'] += 1
+                    self.info['operating_cost'] += trip_cost
+                    self.info['served_waiting'] += wait_t
+                    self.info['true_profit'] += base_reward
                 else:
                     if pax.unmatched_update():
                         matched_leave_index.append(i)

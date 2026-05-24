@@ -1263,7 +1263,8 @@ else:
                 total_vehicles=args.total_vehicles)
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed=args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions, brand_momentum_lambda=args.brand_momentum_lambda, brand_momentum_gamma=args.brand_momentum_gamma)
-    
+    env.track_trip_assignments = True
+
     # Print fixed agent information
     print_multi_test_mode_banner(args.fix_agent)
 

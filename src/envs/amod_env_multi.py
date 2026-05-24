@@ -193,6 +193,7 @@ class AMoD:
 
         self.seed = seed
         self._shuffle_rng = random.Random(seed)
+        self.track_trip_assignments = False
 
         self.bm_lambda = brand_momentum_lambda
         self.bm_gamma = brand_momentum_gamma
@@ -351,62 +352,44 @@ class AMoD:
                         avg_probabilities = probabilities_batch.mean(axis=0)
                         
                     else:
-                        # Original uniform wage approach (track wages too)
+                        # Uniform wage path
                         passenger_wages = np.full(int(d_original), self.wage)
                         self.system_wage_samples.extend(passenger_wages.tolist())
-                        
-                        income_effect = self.wage / self.wage  # Always 1.0
-                        
-                        # Compute utilities for all agents (same for all passengers)
-                        U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0 + self.bm_gamma * self.brand_momentum[0]
-                        U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1 + self.bm_gamma * self.brand_momentum[1]
-                        U_reject_mean = U_reject
-                        
-                        # Build choice set
-                        exp_utilities = []
-                        labels = []
-                        
-                        # Always include both agents in the choice set
-                        # (Fixed agent will use base price due to scalar 0.5)
-                        exp_utilities.append(np.exp(U_0))
-                        labels.append("agent0")
-                        exp_utilities.append(np.exp(U_1))
-                        labels.append("agent1")
-                        
-                        # Always include reject option
-                        exp_utilities.append(np.exp(U_reject))
-                        labels.append("reject")
 
-                        Probabilities = np.array(exp_utilities) / np.sum(exp_utilities)
-                        labels_array = np.array(labels)
-                        
-                        # Batch sample all choices at once with uniform wage
-                        choices = np.random.choice(labels_array, size=int(d_original), p=Probabilities)
-                        d0 = np.sum(choices == "agent0")
-                        d1 = np.sum(choices == "agent1")
-                        dr = np.sum(choices == "reject")
-                        
+                        # Compute utilities (same for all passengers under uniform wage)
+                        U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - self.choice_price_mult * pr0 + self.bm_gamma * self.brand_momentum[0]
+                        U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - self.choice_price_mult * pr1 + self.bm_gamma * self.brand_momentum[1]
+                        U_reject_mean = U_reject
+
+                        exp_U_0 = np.exp(U_0)
+                        exp_U_1 = np.exp(U_1)
+                        exp_U_r = np.exp(U_reject)
+                        total = exp_U_0 + exp_U_1 + exp_U_r
+                        Probabilities = np.array([exp_U_0 / total, exp_U_1 / total, exp_U_r / total])
+
+                        d0, d1, dr = np.random.multinomial(int(d_original), Probabilities).tolist()
+
                         avg_probabilities = Probabilities
                     
-                    # Log trip assignment details (use average values for dynamic wage case)
-                    self.trip_assignments.append({
-                        'time': t,
-                        'origin': n,
-                        'destination': j,
-                        'travel_time': travel_time,
-                        'price_agent0': pr0,
-                        'price_agent1': pr1,
-                        'utility_agent0': U_0,
-                        'utility_agent1': U_1,
-                        'utility_reject': U_reject_mean,
-                        'prob_agent0': avg_probabilities[0],
-                        'prob_agent1': avg_probabilities[1],
-                        'prob_reject': avg_probabilities[2],
-                        'demand_agent0': d0,
-                        'demand_agent1': d1,
-                        'demand_rejected': dr,
-                        'total_demand': d_original
-                    })
+                    if self.track_trip_assignments:
+                        self.trip_assignments.append({
+                            'time': t,
+                            'origin': n,
+                            'destination': j,
+                            'travel_time': travel_time,
+                            'price_agent0': pr0,
+                            'price_agent1': pr1,
+                            'utility_agent0': U_0,
+                            'utility_agent1': U_1,
+                            'utility_reject': U_reject_mean,
+                            'prob_agent0': avg_probabilities[0],
+                            'prob_agent1': avg_probabilities[1],
+                            'prob_reject': avg_probabilities[2],
+                            'demand_agent0': d0,
+                            'demand_agent1': d1,
+                            'demand_rejected': dr,
+                            'total_demand': d_original
+                        })
 
                 self.agent_demand[0][(n, j)][t] += d0
                 self.agent_demand[1][(n, j)][t] += d1
@@ -428,7 +411,7 @@ class AMoD:
             for agent_id in [0, 1]:
                 accCurrent = self.agent_acc[agent_id][n][t]
 
-                new_enterq = [pax for pax in self.agent_passenger[agent_id][n][t] if pax.enter()]
+                new_enterq = self.agent_passenger[agent_id][n][t]
                 queueCurrent = self.agent_queue[agent_id][n] + new_enterq
                 self.agent_queue[agent_id][n] = queueCurrent
 
@@ -436,41 +419,33 @@ class AMoD:
 
                 for i, pax in enumerate(queueCurrent):
                     if accCurrent > 0:
-                        accept = pax.match(t)
-                        if accept:
-                            matched_leave_index.append(i)
-                            accCurrent -= 1
-                            
-                            arr_t = t + self.demandTime[pax.origin, pax.destination][t]
-                            self.agent_paxFlow[agent_id][pax.origin, pax.destination][arr_t] += 1
-                            
-                            wait_t = pax.wait_time
-                            self.agent_paxWait[agent_id][pax.origin, pax.destination].append(wait_t)
+                        matched_leave_index.append(i)
+                        accCurrent -= 1
 
-                            self.agent_dacc[agent_id][pax.destination][arr_t] += 1
+                        arr_t = t + self.demandTime[pax.origin, pax.destination][t]
+                        self.agent_paxFlow[agent_id][pax.origin, pax.destination][arr_t] += 1
 
-                            self.agent_servedDemand[agent_id][pax.origin, pax.destination][t] += 1
+                        wait_t = pax.wait_time
+                        self.agent_paxWait[agent_id][pax.origin, pax.destination].append(wait_t)
 
-                            trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
-                            trip_revenue = pax.price
-                            
-                            # Calculate profitability-aware reward
-                            base_reward = trip_revenue - trip_cost
-                            
-                            paxreward[agent_id] += base_reward
+                        self.agent_dacc[agent_id][pax.destination][arr_t] += 1
 
-                            self.ext_reward_agents[agent_id][n] += max(0, trip_cost)
+                        self.agent_servedDemand[agent_id][pax.origin, pax.destination][t] += 1
 
-                            self.agent_info[agent_id]['revenue'] += trip_revenue
-                            self.agent_info[agent_id]['served_demand'] += 1
-                            self.agent_info[agent_id]['operating_cost'] += trip_cost
-                            self.agent_info[agent_id]['served_waiting'] += wait_t
-                            self.agent_info[agent_id]['true_profit'] += base_reward
-                        else:
-                            if pax.unmatched_update():
-                                matched_leave_index.append(i)
-                                self.agent_unservedDemand[agent_id][pax.origin, pax.destination][t] += 1
-                                self.agent_info[agent_id]['unserved_demand'] += 1
+                        trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
+                        trip_revenue = pax.price
+
+                        base_reward = trip_revenue - trip_cost
+
+                        paxreward[agent_id] += base_reward
+
+                        self.ext_reward_agents[agent_id][n] += max(0, trip_cost)
+
+                        self.agent_info[agent_id]['revenue'] += trip_revenue
+                        self.agent_info[agent_id]['served_demand'] += 1
+                        self.agent_info[agent_id]['operating_cost'] += trip_cost
+                        self.agent_info[agent_id]['served_waiting'] += wait_t
+                        self.agent_info[agent_id]['true_profit'] += base_reward
                     else:
                         if pax.unmatched_update():
                             matched_leave_index.append(i)
