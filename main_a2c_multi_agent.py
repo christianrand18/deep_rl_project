@@ -877,9 +877,9 @@ if not args.test:
 
             if meta_policies:
                 for _a in meta_policies:
-                    # Net-of-rebalancing daily profit, matching the low-level reward signal
-                    # (revenue − operating_cost − rebalancing_cost).
-                    meta_policies[_a].store_reward(accumulator.profit[_a] - accumulator.reb_cost[_a])
+                    meta_policies[_a].store_reward(
+                        (accumulator.profit[_a] - accumulator.reb_cost[_a]) / args.reward_scalar
+                    )
             if accumulator is not None:
                 # Update momentum snapshot to include today's M_o(d), then build meta_obs
                 # for the next day. Even with no meta, we still build the obs vector so
