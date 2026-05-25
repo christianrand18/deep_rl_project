@@ -107,7 +107,8 @@ class PicardSolver:
                  max_iters: int = 6, tol: float = 1e-3,
                  episode_seed_base: int = 12345,
                  update_strategy: str = 'analytic',
-                 omega: float = 1.0):
+                 omega: float = 1.0,
+                 anderson_m: int = 5):
         self.env = env
         self.meta_policies = meta_policies or {}
         self.model_agents = model_agents
@@ -123,6 +124,7 @@ class PicardSolver:
         self.episode_seed_base = episode_seed_base
         self._update_strategy = update_strategy
         self._omega = omega
+        self._anderson_m = anderson_m
 
         # Per-episode state (reset by begin_episode)
         self._k: int = 0
@@ -135,6 +137,7 @@ class PicardSolver:
         self._current_prev_state: Optional[DayState] = None
         self._last_result: Optional[EpisodeResult] = None
         self._prev_S: Optional[list] = None
+        self._anderson_history: list = []   # list of (x_flat, Gx_flat) per iteration
 
     # ── coordinator API ───────────────────────────────────────────────────────
 
@@ -147,6 +150,7 @@ class PicardSolver:
         self._day_results = []
         self._delta_history = []
         self._last_result = None
+        self._anderson_history = []
 
     def prepare_day(self, i_day: int, env) -> dict:
         """Inject predicted state; return meta multipliers for this day.
@@ -273,6 +277,8 @@ class PicardSolver:
             return self._jacobi_update_guess(S_old, S_new, iter_idx, delta_history)
         elif self._update_strategy == 'analytic':
             return self._analytic_update_guess(S_old, S_new, iter_idx, delta_history)
+        elif self._update_strategy == 'anderson':
+            return self._anderson_update_guess(S_old, S_new, iter_idx, delta_history)
         else:
             raise ValueError(f"[Picard] Unknown update_strategy: {self._update_strategy!r}")
 
@@ -318,6 +324,85 @@ class PicardSolver:
             bm_current = bm_next
 
         return result
+
+    def _anderson_update_guess(self, S_old, S_new, iter_idx: int, delta_history: list) -> list:
+        """Anderson acceleration on top of the analytic update.
+
+        Uses the last anderson_m iterates to find the optimal linear combination
+        of G(x_j) values that minimises the residual norm, breaking the slow
+        contraction / oscillation of the plain fixed-point iteration.
+
+        Each iteration:
+          1. Apply analytic update → G(x_k)
+          2. Store (x_k, G(x_k)) in a rolling window of length anderson_m
+          3. Solve: min ||F θ||²  s.t.  sum(θ) = 1,  F[:,j] = G(x_j) - x_j
+          4. Return G_history @ θ  (mixed over BM dimensions only;
+             meta_obs is taken from G(x_k) unchanged)
+        """
+        S_g = self._analytic_update_guess(S_old, S_new, iter_idx, delta_history)
+
+        x_flat  = self._bm_to_flat(S_old)
+        gx_flat = self._bm_to_flat(S_g)
+
+        self._anderson_history.append((x_flat, gx_flat))
+        if len(self._anderson_history) > self._anderson_m:
+            self._anderson_history.pop(0)
+
+        if len(self._anderson_history) < 2:
+            return S_g   # not enough history yet; use plain analytic result
+
+        bm_mixed = self._anderson_mix(self._anderson_history)
+
+        # Reconstruct DayState list: mixed BM, meta_obs from G(x_k)
+        result = [S_g[0]]   # day 0 is always fixed
+        n_a = len(self.agents)
+        for d in range(self.num_days):
+            bm_slice = bm_mixed[d * n_a: (d + 1) * n_a]
+            result.append(DayState(
+                brand_momentum={a: float(bm_slice[i]) for i, a in enumerate(self.agents)},
+                meta_obs=dict(S_g[d + 1].meta_obs),
+            ))
+        return result
+
+    def _bm_to_flat(self, S: list) -> np.ndarray:
+        """Flatten brand_momentum for days 1..N into a 1-D float64 array."""
+        return np.array(
+            [S[d].brand_momentum[a] for d in range(1, len(S)) for a in self.agents],
+            dtype=np.float64,
+        )
+
+    def _anderson_mix(self, history: list) -> np.ndarray:
+        """Solve the Anderson least-squares problem and return the mixed G(x).
+
+        min ||F θ||²  s.t.  sum(θ) = 1
+        where F[:,j] = gx_j - x_j  (residuals).
+
+        Uses the unconstrained reformulation (eliminate one θ via the constraint)
+        with Tikhonov regularisation (λ = 1e-10 · ||ΔF||²_F) for stability.
+        Falls back to the most recent G(x) on singular systems.
+        """
+        xs  = np.stack([h[0] for h in history], axis=1)   # (dim, m)
+        gxs = np.stack([h[1] for h in history], axis=1)   # (dim, m)
+        R   = gxs - xs                                     # residuals (dim, m)
+        m   = len(history)
+
+        # Unconstrained reformulation:
+        #   dR[:,j] = R[:,j] - R[:,-1]   (shape: dim × m-1)
+        #   solve:  min ||dR c + R[:,-1]||²   →   c = -(dR^T dR)^{-1} dR^T R[:,-1]
+        #   recover: θ = [c; 1 - sum(c)]
+        dR  = R[:, :-1] - R[:, -1:]                        # (dim, m-1)
+        lam = 1e-10 * float((dR * dR).sum())
+        A   = dR.T @ dR + lam * np.eye(m - 1)
+        b   = -(dR.T @ R[:, -1])
+        try:
+            c = np.linalg.solve(A, b)
+        except np.linalg.LinAlgError:
+            return gxs[:, -1]   # fallback: most recent G(x)
+
+        theta = np.empty(m)
+        theta[:-1] = c
+        theta[-1]  = 1.0 - c.sum()
+        return gxs @ theta
 
     def _compute_delta(self, S_new, S_old) -> float:
         """Max-norm over brand_momentum on days 1..N. Skips d=0 (fixed episode-start)."""

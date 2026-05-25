@@ -368,9 +368,12 @@ class A2CArgumentBuilder:
 		parser.add_argument("--picard_tol", type=float, default=1e-3,
 			help="Convergence tolerance for Picard iteration (max-norm on state; default: 1e-3).")
 		parser.add_argument("--picard_update_strategy", type=str, default="analytic",
-			choices=["jacobi", "analytic"],
+			choices=["jacobi", "analytic", "anderson"],
 			help="Picard S_pred update strategy. 'jacobi': pure full-replace (N+1 iters). "
-			     "'analytic': analytical BM propagation via observed market shares (~2 iters). (default: analytic)")
+			     "'analytic': analytical BM propagation via observed market shares. "
+			     "'anderson': analytic + Anderson acceleration over last picard_anderson_m iterates. (default: analytic)")
+		parser.add_argument("--picard_anderson_m", type=int, default=5,
+			help="Window size for Anderson acceleration (update_strategy=anderson). (default: 5)")
 		parser.add_argument("--picard_omega", type=float, default=1.0,
 			help="Damping factor for Picard update. "
 			     "BM_new = (1-ω)·BM_old + ω·BM_proposed. 1.0=no damping, 0.5=half-step. (default: 1.0)")

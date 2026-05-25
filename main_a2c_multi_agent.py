@@ -422,13 +422,15 @@ if not args.test:
 
     if accumulator is not None and not args.test:
         wandb.define_metric("day/*", step_metric="meta/global_day")
+        wandb.define_metric("debug/*", step_metric="episode")
 
     # Picard coordinator (only allocated when --parallel_days is set)
     picard_solver = (
         PicardSolver(env, meta_policies, model_agents, args,
                      max_iters=args.picard_max_iters, tol=args.picard_tol,
                      update_strategy=args.picard_update_strategy,
-                     omega=args.picard_omega)
+                     omega=args.picard_omega,
+                     anderson_m=args.picard_anderson_m)
         if args.parallel_days else None
     )
 
