@@ -24,3 +24,4 @@ After fixing the day-boundary terminal handling in the A2C return computation (C
 After fixing the meta-policy reward normalization bug (2026-05-25, branch `fix/meta-reward-normalization`), the bounded-ρ meta run is re-run with the fix to get a clean read on whether compensation is the real bottleneck:
 
 - normfix_d7_g5_meta_one: re-run of `sanity_bound_d7_g5_meta_one` with reward normalization fix applied
+- normfix_d7_g5_meta_one_unbound: same as above but without bounded-ρ — isolates whether compensation amplitude changes what the meta learns
