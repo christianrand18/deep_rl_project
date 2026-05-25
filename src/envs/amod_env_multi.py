@@ -194,6 +194,7 @@ class AMoD:
         self.seed = seed
         self._shuffle_rng = random.Random(seed)
         self.track_trip_assignments = False
+        self._match_cache = None
 
         self.bm_lambda = brand_momentum_lambda
         self.bm_gamma = brand_momentum_gamma
@@ -201,32 +202,138 @@ class AMoD:
 
         # Trip assignment tracking: stores detailed data for each trip
         self.trip_assignments = []
-    
+
+    def _build_match_cache(self):
+        """Cache per-edge scenario arrays + per-edge inner-dict refs.
+
+        Built lazily and invalidated by reset(). Holds references to the
+        currently-live agent_price / agent_demand / demand inner dicts so
+        the per-edge writeback loop can avoid tuple-key dict lookups.
+        """
+        edges = list(self.G.edges)
+        n_edges = len(edges)
+        tf = self.tf + 1
+        region = list(self.region)
+        region_to_idx = {r: i for i, r in enumerate(region)}
+        n_regions = len(region)
+
+        baseline_price = np.zeros((n_edges, tf))
+        travel_time_arr = np.zeros((n_edges, tf))
+        demand_orig = np.zeros((n_edges, tf), dtype=np.int64)
+        edge_n_idx = np.zeros(n_edges, dtype=np.int64)
+        edge_j = np.zeros(n_edges, dtype=np.int64)
+        for k, (n, j) in enumerate(edges):
+            edge_n_idx[k] = region_to_idx[n]
+            edge_j[k] = j
+            ap = self.agent_price[0][n, j]
+            dt = self.demandTime[n, j]
+            dm = self.demand[n, j]
+            for tt in range(tf):
+                if tt in ap:
+                    baseline_price[k, tt] = ap[tt]
+                if tt in dt:
+                    travel_time_arr[k, tt] = dt[tt]
+                if tt in dm:
+                    demand_orig[k, tt] = dm[tt]
+
+        ap0_per_edge = [self.agent_price[0][e] for e in edges]
+        ap1_per_edge = [self.agent_price[1][e] for e in edges]
+        ad0_per_edge = [self.agent_demand[0][e] for e in edges]
+        ad1_per_edge = [self.agent_demand[1][e] for e in edges]
+        demand_per_edge = [self.demand[e] for e in edges]
+
+        edges_idx_by_origin = [[] for _ in range(n_regions)]
+        for k in range(n_edges):
+            edges_idx_by_origin[edge_n_idx[k]].append(k)
+        edges_idx_by_origin = [np.array(lst, dtype=np.int64) for lst in edges_idx_by_origin]
+
+        # --- Reb-step-specific cache (indexed by self.edges order, which may
+        # differ from list(self.G.edges) order). rebAction arrays produced by
+        # solveRebFlow_* are indexed by self.edges. ---
+        reb_edges = list(self.edges)
+        n_reb = len(reb_edges)
+        reb_i_idx = np.zeros(n_reb, dtype=np.int64)
+        reb_j_idx = np.zeros(n_reb, dtype=np.int64)
+        reb_time = np.zeros((n_reb, tf), dtype=np.int64)
+        for k, (i, j) in enumerate(reb_edges):
+            reb_i_idx[k] = region_to_idx[i]
+            reb_j_idx[k] = region_to_idx[j]
+            rt_inner = self.rebTime[i, j]
+            for tt in range(tf):
+                if tt in rt_inner:
+                    reb_time[k, tt] = rt_inner[tt]
+
+        # Per-edge inner-dict refs in reb_edges order.
+        reb_flow_pe = [
+            [self.agent_rebFlow[a][e] for e in reb_edges] for a in self.agents
+        ]
+        reb_flow_ori_pe = [
+            [self.agent_rebFlow_ori[a][e] for e in reb_edges] for a in self.agents
+        ]
+        # paxFlow only has entries for demand edges (no self-loops). Use .get
+        # so a missing key doesn't auto-create on the defaultdict.
+        pax_flow_pe_reb = [
+            [self.agent_paxFlow[a].get(e, None) for e in reb_edges]
+            for a in self.agents
+        ]
+        # Per-region refs for agent_acc / agent_dacc (region-label key).
+        acc_per_region = [
+            [self.agent_acc[a][r] for r in region] for a in self.agents
+        ]
+        dacc_per_region = [
+            [self.agent_dacc[a][r] for r in region] for a in self.agents
+        ]
+        # NetworkX edge dict refs for the post-step G.edges['time'] update.
+        g_edge_dicts = [self.G.edges[e] for e in edges]
+
+        self._match_cache = {
+            "edges": edges,
+            "n_edges": n_edges,
+            "region": region,
+            "region_to_idx": region_to_idx,
+            "n_regions": n_regions,
+            "edge_n_idx": edge_n_idx,
+            "edge_j": edge_j,
+            "edges_idx_by_origin": edges_idx_by_origin,
+            "baseline_price": baseline_price,
+            "travel_time": travel_time_arr,
+            "demand_orig": demand_orig,
+            "ap0_per_edge": ap0_per_edge,
+            "ap1_per_edge": ap1_per_edge,
+            "ad0_per_edge": ad0_per_edge,
+            "ad1_per_edge": ad1_per_edge,
+            "demand_per_edge": demand_per_edge,
+            # reb-step cache
+            "reb_edges": reb_edges,
+            "n_reb": n_reb,
+            "reb_i_idx": reb_i_idx,
+            "reb_j_idx": reb_j_idx,
+            "reb_time": reb_time,
+            "reb_flow_pe": reb_flow_pe,
+            "reb_flow_ori_pe": reb_flow_ori_pe,
+            "pax_flow_pe_reb": pax_flow_pe_reb,
+            "acc_per_region": acc_per_region,
+            "dacc_per_region": dacc_per_region,
+            "g_edge_dicts": g_edge_dicts,
+        }
+
     def match_step_simple(self, price = None):
         t = self.time
         paxreward = {0: 0, 1: 0}
-        
+
         for agent_id in self.agents:
             self.agent_unprofitable_trips[agent_id] = 0
-        
         for agent_id in self.agents:
             for key in self.agent_info[agent_id]:
                 self.agent_info[agent_id][key] = 0
-        
         for key in self.system_info:
             self.system_info[key] = 0
-        
         self.system_wage_samples = []
 
-        total_original_demand = 0
-        total_rejected_demand = 0
-
-        # OPTIMIZED: Move condition check and scalar extraction outside nested loops (8.47x speedup)
-        # Check condition once instead of for every (n,j) edge pair
+        # Price scalar extraction (unchanged from prior code).
         price_scalars = None
         if self.mode != 0 and price is not None:
             total_price_sum = sum(np.sum(price[a]) for a in self.agents)
-            
             if total_price_sum != 0:
                 price_scalars = {}
                 for agent_id in self.agents:
@@ -238,225 +345,271 @@ class AMoD:
                     else:
                         price_scalars[agent_id] = {}
                         if self.od_price_actions:
-                            # OD-based: extract per (origin, destination) price scalars
                             for n in self.region:
                                 for j in self.G[n]:
-                                    # price[agent_id][n][j] gives the OD price scalar
-                                    # Works for both mode 1 ([nregion, nregion]) and mode 2 ([nregion, nregion+1])
-                                    scalar = float(price[agent_id][n][j])
-                                    price_scalars[agent_id][(n, j)] = scalar
+                                    price_scalars[agent_id][(n, j)] = float(price[agent_id][n][j])
                         else:
-                            # Origin-based: extract per-region price scalars
                             for n in self.region:
                                 scalar = price[agent_id][n]
                                 if isinstance(scalar, (list, np.ndarray)):
                                     scalar = scalar[0]
                                 price_scalars[agent_id][n] = scalar
 
+        if self._match_cache is None:
+            self._build_match_cache()
+        cache = self._match_cache
+        edges = cache["edges"]
+        n_edges = cache["n_edges"]
+        edge_n_idx = cache["edge_n_idx"]
+        edge_j = cache["edge_j"]
+        region = cache["region"]
+        edges_idx_by_origin = cache["edges_idx_by_origin"]
+
+        # --- Vectorized price application across all edges ---
+        # baseline_price is the scenario reference; agent_price for both
+        # agents is initialized to the same reference value per (i,j,t).
+        baseline_p = cache["baseline_price"][:, t]
+        travel_times = cache["travel_time"][:, t]
+        demands = cache["demand_orig"][:, t].copy()
+
+        if price_scalars is not None:
+            if self.od_price_actions:
+                scalars_0 = np.array([price_scalars[0][e] for e in edges])
+                scalars_1 = np.array([price_scalars[1][e] for e in edges])
+            else:
+                sper0 = np.array([price_scalars[0][r] for r in region])
+                sper1 = np.array([price_scalars[1][r] for r in region])
+                scalars_0 = sper0[edge_n_idx]
+                scalars_1 = sper1[edge_n_idx]
+            pr0 = 2.0 * baseline_p * scalars_0
+            pr1 = 2.0 * baseline_p * scalars_1
+            pr0 = np.where(pr0 <= 1e-6, self.jitter, pr0)
+            pr1 = np.where(pr1 <= 1e-6, self.jitter, pr1)
+        else:
+            pr0 = baseline_p
+            pr1 = baseline_p
+
+        # --- Choice model ---
+        travel_times_in_hours = travel_times / 60.0
+        # Buffers populated by either path.
+        d0_arr = np.zeros(n_edges, dtype=np.int64)
+        d1_arr = np.zeros(n_edges, dtype=np.int64)
+        dr_arr = np.zeros(n_edges, dtype=np.int64)
+        U_0_log = None  # populated only if track_trip_assignments
+        U_1_log = None
+        prob_log = None
+
+        if self.use_dynamic_wage_man_south and self.wage_distributions is not None:
+            # Per-passenger wage sampling — keep the per-edge loop but feed it
+            # from the cached arrays.
+            if self.track_trip_assignments:
+                U_0_log = np.zeros(n_edges)
+                U_1_log = np.zeros(n_edges)
+                prob_log = np.zeros((n_edges, 3))
+            for k in range(n_edges):
+                d_k = int(demands[k])
+                if d_k == 0:
+                    continue
+                n_lab = edges[k][0]
+                tt_h = travel_times_in_hours[k]
+                if n_lab in self.wage_distributions:
+                    dist = self.wage_distributions[n_lab]
+                    pw = np.random.choice(dist['wages'], size=d_k, p=dist['probabilities'])
+                else:
+                    pw = np.full(d_k, self.wage)
+                self.system_wage_samples.extend(pw.tolist())
+                ie = self.city_avg_wage / pw
+                U0b = self.choice_intercept - 0.71 * pw * tt_h - ie * self.choice_price_mult * pr0[k] + self.bm_gamma * self.brand_momentum[0]
+                U1b = self.choice_intercept - 0.71 * pw * tt_h - ie * self.choice_price_mult * pr1[k] + self.bm_gamma * self.brand_momentum[1]
+                Urb = np.zeros(d_k)
+                ee = np.column_stack([np.exp(U0b), np.exp(U1b), np.exp(Urb)])
+                pp = ee / ee.sum(axis=1, keepdims=True)
+                rv = np.random.rand(d_k)
+                cp = np.cumsum(pp, axis=1)
+                ch = np.sum(rv[:, None] > cp, axis=1)
+                d0_arr[k] = int(np.sum(ch == 0))
+                d1_arr[k] = int(np.sum(ch == 1))
+                dr_arr[k] = int(np.sum(ch == 2))
+                if self.track_trip_assignments:
+                    U_0_log[k] = float(np.mean(U0b))
+                    U_1_log[k] = float(np.mean(U1b))
+                    prob_log[k] = pp.mean(axis=0)
+        else:
+            # Uniform wage: fully vectorized MNL + Multinomial-as-Binomial chain.
+            base_U = self.choice_intercept - 0.71 * self.wage * travel_times_in_hours
+            U_0 = base_U - self.choice_price_mult * pr0 + self.bm_gamma * self.brand_momentum[0]
+            U_1 = base_U - self.choice_price_mult * pr1 + self.bm_gamma * self.brand_momentum[1]
+            exp_U_0 = np.exp(U_0)
+            exp_U_1 = np.exp(U_1)
+            total_exp = exp_U_0 + exp_U_1 + 1.0  # exp(0) for reject
+            p0_arr = exp_U_0 / total_exp
+            p1_arr = exp_U_1 / total_exp
+            p_r_arr = 1.0 / total_exp
+
+            d0_arr = np.random.binomial(demands, p0_arr).astype(np.int64)
+            rem = demands - d0_arr
+            denom = p1_arr + p_r_arr
+            # Safe divide: where denom==0 nothing to split anyway.
+            p_split = np.where(denom > 0, p1_arr / np.where(denom > 0, denom, 1.0), 0.0)
+            d1_arr = np.random.binomial(rem, p_split).astype(np.int64)
+            dr_arr = (rem - d1_arr).astype(np.int64)
+
+            total_for_wages = int(demands.sum())
+            if total_for_wages > 0:
+                self.system_wage_samples.extend([self.wage] * total_for_wages)
+
+            if self.track_trip_assignments:
+                U_0_log = U_0
+                U_1_log = U_1
+                prob_log = np.column_stack([p0_arr, p1_arr, p_r_arr])
+
+        # --- Per-edge writebacks via cached refs ---
+        ap0_per_edge = cache["ap0_per_edge"]
+        ap1_per_edge = cache["ap1_per_edge"]
+        ad0_per_edge = cache["ad0_per_edge"]
+        ad1_per_edge = cache["ad1_per_edge"]
+        demand_per_edge = cache["demand_per_edge"]
+        pr0_list = pr0.tolist()
+        pr1_list = pr1.tolist()
+        d0_list = d0_arr.tolist()
+        d1_list = d1_arr.tolist()
+        dr_list = dr_arr.tolist()
+        demands_list = demands.tolist()
+        if price_scalars is not None:
+            for k in range(n_edges):
+                ap0_per_edge[k][t] = pr0_list[k]
+                ap1_per_edge[k][t] = pr1_list[k]
+        for k in range(n_edges):
+            d0_k = d0_list[k]
+            d1_k = d1_list[k]
+            ad0_per_edge[k][t] += d0_k
+            ad1_per_edge[k][t] += d1_k
+            demand_per_edge[k][t] = d0_k + d1_k
+
+        total_original_demand = int(demands.sum())
+        total_rejected_demand = int(dr_arr.sum())
+
+        if self.track_trip_assignments:
+            travel_times_list = travel_times.tolist()
+            for k in range(n_edges):
+                d_k = demands_list[k]
+                if d_k == 0:
+                    continue
+                n_lab, j_lab = edges[k]
+                self.trip_assignments.append({
+                    'time': t,
+                    'origin': n_lab,
+                    'destination': j_lab,
+                    'travel_time': travel_times_list[k],
+                    'price_agent0': pr0_list[k],
+                    'price_agent1': pr1_list[k],
+                    'utility_agent0': float(U_0_log[k]),
+                    'utility_agent1': float(U_1_log[k]),
+                    'utility_reject': 0,
+                    'prob_agent0': float(prob_log[k, 0]),
+                    'prob_agent1': float(prob_log[k, 1]),
+                    'prob_reject': float(prob_log[k, 2]),
+                    'demand_agent0': d0_list[k],
+                    'demand_agent1': d1_list[k],
+                    'demand_rejected': dr_list[k],
+                    'total_demand': d_k,
+                })
+
+        # --- Build new passenger lists per (agent, origin) ---
+        # Tuple format: (destination, price, wait_time=0).
+        arr0 = self.agent_arrivals[0]
+        arr1 = self.agent_arrivals[1]
+        for n_idx, n_label in enumerate(region):
+            e_idx_arr = edges_idx_by_origin[n_idx]
+            if e_idx_arr.size == 0:
+                self.agent_passenger[0][n_label][t] = []
+                self.agent_passenger[1][n_label][t] = []
+                continue
+            dsts = edge_j[e_idx_arr]
+            c0 = d0_arr[e_idx_arr]
+            c1 = d1_arr[e_idx_arr]
+            p0 = pr0[e_idx_arr]
+            p1 = pr1[e_idx_arr]
+            if c0.sum() > 0:
+                dsts0 = np.repeat(dsts, c0).tolist()
+                prices0 = np.repeat(p0, c0).tolist()
+                pax0 = list(zip(dsts0, prices0, [0] * len(dsts0)))
+                arr0 += len(pax0)
+            else:
+                pax0 = []
+            if c1.sum() > 0:
+                dsts1 = np.repeat(dsts, c1).tolist()
+                prices1 = np.repeat(p1, c1).tolist()
+                pax1 = list(zip(dsts1, prices1, [0] * len(dsts1)))
+                arr1 += len(pax1)
+            else:
+                pax1 = []
+            self.agent_passenger[0][n_label][t] = pax0
+            self.agent_passenger[1][n_label][t] = pax1
+        self.agent_arrivals[0] = arr0
+        self.agent_arrivals[1] = arr1
+
+        # --- Per-region match loop (tuple-based; shuffle once per region) ---
+        max_wait = self.max_wait
+        beta = self.beta
         for n in self.region:
-            # Update current queue
-            for j in self.G[n]:
-                d = self.demand[n, j][t]
-                
-                # Apply pre-extracted price scalars (if available)
-                # Inner loop now just does cheap dict lookup instead of condition checks
-                if price_scalars is not None:
-                    for agent_id in self.agents:
-                        baseline_price = self.agent_price[agent_id][n, j][t]
-                        if self.od_price_actions:
-                            price_scalar = price_scalars[agent_id][(n, j)]
-                        else:
-                            price_scalar = price_scalars[agent_id][n]
-                        
-                        # Calculate proposed price (multiply by 2 to allow range [0, 2×baseline])
-                        p = 2 * baseline_price * price_scalar
-                        
-                        # Ensure absolute minimum price (avoid zero prices)
-                        if p <= 1e-6:
-                            p = self.jitter
-                        
-                        self.agent_price[agent_id][n, j][t] = p
+            self._shuffle_rng.shuffle(self.agent_passenger[0][n][t])
+            self._shuffle_rng.shuffle(self.agent_passenger[1][n][t])
 
-                ####################### Choice Model Implementation #################
-                d_original = d  # before applying choice model
-
-                #--Choice Model--
-                
-                pr0 = self.agent_price[0][n, j][t]
-                pr1 = self.agent_price[1][n, j][t]
-                
-                travel_time = self.demandTime[n, j][t]
-                
-                travel_time_in_hours = travel_time / 60
-                U_reject = 0 
-                
-                d0 = d1 = dr = 0
-
-                # Use choice model with appropriate choice set
-                if d_original > 0:
-                    # Batched wage sampling for performance
-                    if self.use_dynamic_wage_man_south and self.wage_distributions is not None:
-                        # Sample all passenger wages at once from region-specific distribution
-                        if n in self.wage_distributions:
-                            dist = self.wage_distributions[n]
-                            passenger_wages = np.random.choice(
-                                dist['wages'], 
-                                size=int(d_original), 
-                                p=dist['probabilities']
-                            )
-                        else:
-                            # Fallback to uniform wage if region not in distribution
-                            passenger_wages = np.full(int(d_original), self.wage)
-                        
-                        # Track sampled wages for system-wide average
-                        self.system_wage_samples.extend(passenger_wages.tolist())
-                        
-                        # Vectorized income effect calculation: city_avg_wage / passenger_wage
-                        income_effects = self.city_avg_wage / passenger_wages
-                        
-                        # Vectorized utility calculations for all passengers
-                        U_0_batch = (
-                            self.choice_intercept
-                            - 0.71 * passenger_wages * travel_time_in_hours
-                            - income_effects * self.choice_price_mult * pr0
-                            + self.bm_gamma * self.brand_momentum[0]
-                        )
-                        U_1_batch = (
-                            self.choice_intercept
-                            - 0.71 * passenger_wages * travel_time_in_hours
-                            - income_effects * self.choice_price_mult * pr1
-                            + self.bm_gamma * self.brand_momentum[1]
-                        )
-                        U_reject_batch = np.full(int(d_original), U_reject)
-                        
-                        # Vectorized probability calculation
-                        exp_utilities_batch = np.column_stack([
-                            np.exp(U_0_batch), 
-                            np.exp(U_1_batch), 
-                            np.exp(U_reject_batch)
-                        ])
-                        probabilities_batch = exp_utilities_batch / exp_utilities_batch.sum(axis=1, keepdims=True)
-                        
-                        # Fully vectorized choice sampling (no loops)
-                        random_values = np.random.rand(int(d_original))
-                        cumsum_probs = np.cumsum(probabilities_batch, axis=1)
-                        choices = np.sum(random_values[:, None] > cumsum_probs, axis=1)
-                        d0 = np.sum(choices == 0)
-                        d1 = np.sum(choices == 1)
-                        dr = np.sum(choices == 2)
-                        
-                        # For logging: use average utilities across all passengers
-                        U_0 = np.mean(U_0_batch)
-                        U_1 = np.mean(U_1_batch)
-                        U_reject_mean = U_reject
-                        avg_probabilities = probabilities_batch.mean(axis=0)
-                        
-                    else:
-                        # Uniform wage path
-                        passenger_wages = np.full(int(d_original), self.wage)
-                        self.system_wage_samples.extend(passenger_wages.tolist())
-
-                        # Compute utilities (same for all passengers under uniform wage)
-                        U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - self.choice_price_mult * pr0 + self.bm_gamma * self.brand_momentum[0]
-                        U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - self.choice_price_mult * pr1 + self.bm_gamma * self.brand_momentum[1]
-                        U_reject_mean = U_reject
-
-                        exp_U_0 = np.exp(U_0)
-                        exp_U_1 = np.exp(U_1)
-                        exp_U_r = np.exp(U_reject)
-                        total = exp_U_0 + exp_U_1 + exp_U_r
-                        Probabilities = np.array([exp_U_0 / total, exp_U_1 / total, exp_U_r / total])
-
-                        d0, d1, dr = np.random.multinomial(int(d_original), Probabilities).tolist()
-
-                        avg_probabilities = Probabilities
-                    
-                    if self.track_trip_assignments:
-                        self.trip_assignments.append({
-                            'time': t,
-                            'origin': n,
-                            'destination': j,
-                            'travel_time': travel_time,
-                            'price_agent0': pr0,
-                            'price_agent1': pr1,
-                            'utility_agent0': U_0,
-                            'utility_agent1': U_1,
-                            'utility_reject': U_reject_mean,
-                            'prob_agent0': avg_probabilities[0],
-                            'prob_agent1': avg_probabilities[1],
-                            'prob_reject': avg_probabilities[2],
-                            'demand_agent0': d0,
-                            'demand_agent1': d1,
-                            'demand_rejected': dr,
-                            'total_demand': d_original
-                        })
-
-                self.agent_demand[0][(n, j)][t] += d0
-                self.agent_demand[1][(n, j)][t] += d1
-
-                pax0, self.agent_arrivals[0] = generate_passenger((n, j, t, d0, pr0), self.max_wait, self.agent_arrivals[0])
-                pax1, self.agent_arrivals[1] = generate_passenger((n, j, t, d1, pr1), self.max_wait, self.agent_arrivals[1])
-
-                self.agent_passenger[0][n][t].extend(pax0)
-                self.agent_passenger[1][n][t].extend(pax1)
-
-                self._shuffle_rng.shuffle(self.agent_passenger[0][n][t])
-                self._shuffle_rng.shuffle(self.agent_passenger[1][n][t])
-
-                total_original_demand += d_original
-                total_rejected_demand += dr
-
-                self.demand[n, j][t] = d0 + d1
-            
             for agent_id in [0, 1]:
                 accCurrent = self.agent_acc[agent_id][n][t]
-
                 new_enterq = self.agent_passenger[agent_id][n][t]
                 queueCurrent = self.agent_queue[agent_id][n] + new_enterq
                 self.agent_queue[agent_id][n] = queueCurrent
+                num_q = len(queueCurrent)
+                num_served = num_q if accCurrent >= num_q else accCurrent
 
-                matched_leave_index = []
+                ainfo = self.agent_info[agent_id]
+                ext_reward_n = self.ext_reward_agents[agent_id]
+                paxFlow_a = self.agent_paxFlow[agent_id]
+                paxWait_a = self.agent_paxWait[agent_id]
+                dacc_a = self.agent_dacc[agent_id]
+                servedDemand_a = self.agent_servedDemand[agent_id]
+                unservedDemand_a = self.agent_unservedDemand[agent_id]
+                demandTime_t = self.demandTime
+                sum_revenue = 0.0
+                sum_op_cost = 0.0
+                sum_wait = 0
 
-                for i, pax in enumerate(queueCurrent):
-                    if accCurrent > 0:
-                        matched_leave_index.append(i)
-                        accCurrent -= 1
+                for k in range(num_served):
+                    dst, price_p, wt = queueCurrent[k]
+                    tt = demandTime_t[n, dst][t]
+                    arr_t = t + tt
+                    paxFlow_a[n, dst][arr_t] += 1
+                    paxWait_a[n, dst].append(wt)
+                    dacc_a[dst][arr_t] += 1
+                    servedDemand_a[n, dst][t] += 1
+                    trip_cost = tt * beta
+                    sum_revenue += price_p
+                    sum_op_cost += trip_cost
+                    sum_wait += wt
+                    ext_reward_n[n] += trip_cost
+                paxreward[agent_id] += sum_revenue - sum_op_cost
+                ainfo['revenue'] += sum_revenue
+                ainfo['operating_cost'] += sum_op_cost
+                ainfo['served_waiting'] += sum_wait
+                ainfo['true_profit'] += sum_revenue - sum_op_cost
+                ainfo['served_demand'] += num_served
 
-                        arr_t = t + self.demandTime[pax.origin, pax.destination][t]
-                        self.agent_paxFlow[agent_id][pax.origin, pax.destination][arr_t] += 1
-
-                        wait_t = pax.wait_time
-                        self.agent_paxWait[agent_id][pax.origin, pax.destination].append(wait_t)
-
-                        self.agent_dacc[agent_id][pax.destination][arr_t] += 1
-
-                        self.agent_servedDemand[agent_id][pax.origin, pax.destination][t] += 1
-
-                        trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
-                        trip_revenue = pax.price
-
-                        base_reward = trip_revenue - trip_cost
-
-                        paxreward[agent_id] += base_reward
-
-                        self.ext_reward_agents[agent_id][n] += max(0, trip_cost)
-
-                        self.agent_info[agent_id]['revenue'] += trip_revenue
-                        self.agent_info[agent_id]['served_demand'] += 1
-                        self.agent_info[agent_id]['operating_cost'] += trip_cost
-                        self.agent_info[agent_id]['served_waiting'] += wait_t
-                        self.agent_info[agent_id]['true_profit'] += base_reward
+                new_queue = []
+                unserved_count = 0
+                for k in range(num_served, num_q):
+                    dst, price_p, wt = queueCurrent[k]
+                    new_wt = wt + 1
+                    if new_wt >= max_wait:
+                        unservedDemand_a[n, dst][t] += 1
+                        unserved_count += 1
                     else:
-                        if pax.unmatched_update():
-                            matched_leave_index.append(i)
-                            self.agent_unservedDemand[agent_id][pax.origin, pax.destination][t] += 1
-                            self.agent_info[agent_id]['unserved_demand'] += 1
+                        new_queue.append((dst, price_p, new_wt))
+                ainfo['unserved_demand'] += unserved_count
+                self.agent_queue[agent_id][n] = new_queue
+                self.agent_acc[agent_id][n][t + 1] = accCurrent - num_served
 
-                self.agent_queue[agent_id][n] = [
-                    queueCurrent[i] for i in range(len(queueCurrent)) if i not in matched_leave_index
-                ]
-                self.agent_acc[agent_id][n][t+1] = accCurrent
-            
         done = (self.tf == t+1)
         ext_done = [done]*self.nregion
 
@@ -505,63 +658,118 @@ class AMoD:
     def reb_step(self, rebAction_agents):
         t = self.time
         rebreward = {0: 0, 1: 0}
-        self.ext_reward_agents = {a: np.zeros(self.nregion) for a in [0, 1]}
-    
+        nregion = self.nregion
+        self.ext_reward_agents = {a: np.zeros(nregion) for a in [0, 1]}
         for agent_id in [0, 1]:
             self.agent_info[agent_id]['rebalancing_cost'] = 0
 
-        # OPTIMIZED rebalancing loop: pre-calculate reb_time and cost once per edge
+        if self._match_cache is None:
+            self._build_match_cache()
+        cache = self._match_cache
+        n_reb = cache["n_reb"]
+        reb_i_idx = cache["reb_i_idx"]
+        reb_j_idx = cache["reb_j_idx"]
+        reb_time_at_t = cache["reb_time"][:, t]  # int array per edge
+        beta = self.beta
+
         for agent_id in [0, 1]:
-            
             rebAction = rebAction_agents[agent_id]
-    
-            for k in range(len(self.edges)):
-                i, j = self.edges[k]
+            rebAction_arr = np.asarray(rebAction, dtype=np.int64)
 
-                # OPTIMIZED: Pre-calculate reb_time once (was looked up 2 times)
-                reb_time = self.rebTime[i, j][t]
-                # OPTIMIZED: Pre-calculate cost once (eliminates redundant lookup and multiplications)
-                rebalancing_cost = reb_time * self.beta * rebAction[k]
+            # --- Vectorized cost ---
+            cost_arr = reb_time_at_t * beta * rebAction_arr
+            total_cost = float(cost_arr.sum())
+            rebreward[agent_id] -= total_cost
+            self.agent_info[agent_id]['rebalancing_cost'] += total_cost
+            # ext_reward[a][i] -= cost: scatter-sub by origin idx.
+            np.subtract.at(self.ext_reward_agents[agent_id], reb_i_idx, cost_arr)
 
-                self.agent_rebFlow[agent_id][i, j][t + reb_time] = rebAction[k]
-                self.agent_rebFlow_ori[agent_id][i, j][t] = rebAction[k]
-    
-                self.agent_acc[agent_id][i][t+1] -= rebAction[k]
-                self.agent_dacc[agent_id][j][t + reb_time] += rebAction[k]
+            # --- Per-edge dict writes (rebFlow / rebFlow_ori) ---
+            # Skip zero values: writes to defaultdict(int) of 0 are observationally
+            # no-ops downstream (the inner dict's missing-key default is 0, and
+            # nothing checks the presence of a key as a side-channel for these).
+            rf_pe = cache["reb_flow_pe"][agent_id]
+            rfo_pe = cache["reb_flow_ori_pe"][agent_id]
+            reb_list = rebAction_arr.tolist()
+            reb_time_list = reb_time_at_t.tolist()
+            for k in range(n_reb):
+                v = reb_list[k]
+                if v == 0:
+                    continue
+                rt = reb_time_list[k]
+                rf_pe[k][t + rt] = v
+                rfo_pe[k][t] = v
 
-                # Use pre-calculated rebalancing cost (instead of recalculating)
-                rebreward[agent_id] -= rebalancing_cost
-                self.ext_reward_agents[agent_id][i] -= rebalancing_cost
+            # --- agent_acc[a][i][t+1] -= outflow (grouped by origin) ---
+            acc_pr = cache["acc_per_region"][agent_id]
+            outflow_per_origin = np.bincount(
+                reb_i_idx, weights=rebAction_arr, minlength=nregion
+            ).astype(np.int64)
+            for n_idx in range(nregion):
+                v = int(outflow_per_origin[n_idx])
+                if v != 0:
+                    acc_pr[n_idx][t + 1] -= v
 
-                self.agent_info[agent_id]['rebalancing_cost'] += rebalancing_cost
-    
+            # --- agent_dacc[a][j][t + reb_time] += rebAction (varying arr_t) ---
+            dacc_pr = cache["dacc_per_region"][agent_id]
+            j_idx_list = reb_j_idx.tolist()
+            for k in range(n_reb):
+                v = reb_list[k]
+                if v == 0:
+                    continue
+                arr_t = t + reb_time_list[k]
+                dacc_pr[j_idx_list[k]][arr_t] += v
+
+        # --- Second pass: arrivals at j at current t from rebFlow + paxFlow ---
+        # For each agent: gather inner-dict values at t (if present), accumulate
+        # by destination, scatter-add into agent_acc[a][j][t+1].
         for agent_id in [0, 1]:
-            for k in range(len(self.edges)):
-                i, j = self.edges[k]
-                if (i, j) in self.agent_rebFlow[agent_id] and t in self.agent_rebFlow[agent_id][i, j]:
-                    self.agent_acc[agent_id][j][t+1] += self.agent_rebFlow[agent_id][i, j][t]
-                if (i, j) in self.agent_paxFlow[agent_id] and t in self.agent_paxFlow[agent_id][i, j]:
-                    self.agent_acc[agent_id][j][t+1] += self.agent_paxFlow[agent_id][i, j][t]
-        
+            rf_pe = cache["reb_flow_pe"][agent_id]
+            pf_pe = cache["pax_flow_pe_reb"][agent_id]
+            acc_pr = cache["acc_per_region"][agent_id]
+            arrivals_per_dst = np.zeros(nregion, dtype=np.int64)
+            for k in range(n_reb):
+                inner = rf_pe[k]
+                v_reb = inner.get(t, 0)
+                inner_p = pf_pe[k]
+                v_pax = inner_p.get(t, 0) if inner_p is not None else 0
+                total = v_reb + v_pax
+                if total != 0:
+                    arrivals_per_dst[reb_j_idx[k]] += total
+            for n_idx in range(nregion):
+                v = int(arrivals_per_dst[n_idx])
+                if v != 0:
+                    acc_pr[n_idx][t + 1] += v
+
         # For fixed agents, reset vehicle distribution to initial state
         if self.fix_agent in [0, 1]:
             fixed_agent_id = self.fix_agent
-            for n in self.region:
-                self.agent_acc[fixed_agent_id][n][t+1] = self.agent_initial_acc[fixed_agent_id][n]
-    
+            initial = self.agent_initial_acc[fixed_agent_id]
+            acc_pr = cache["acc_per_region"][fixed_agent_id]
+            region = cache["region"]
+            for n_idx, n_label in enumerate(region):
+                acc_pr[n_idx][t + 1] = initial[n_label]
+
         self.time += 1
-    
+
         self.obs = {
             0: (self.agent_acc[0], self.time, self.agent_dacc[0], self.agent_demand[0]),
             1: (self.agent_acc[1], self.time, self.agent_dacc[1], self.agent_demand[1])
         }
-    
-        for i, j in self.G.edges:
-            self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
-    
+
+        # Update G.edges['time'] via cached edge-dict refs (avoids the
+        # self.G.edges[i, j]['time'] networkx attribute lookup).
+        new_time = self.time
+        g_edge_dicts = cache["g_edge_dicts"]
+        edges_g = cache["edges"]
+        for k, (i, j) in enumerate(edges_g):
+            rt_inner = self.rebTime[i, j]
+            if new_time in rt_inner:
+                g_edge_dicts[k]['time'] = rt_inner[new_time]
+
         done = (self.tf == t + 1)
-        ext_done = [done] * self.nregion
-    
+        ext_done = [done] * nregion
+
         return self.obs, rebreward, done, self.agent_info, self.system_info, self.ext_reward_agents, ext_done
 
     def get_total_vehicles(self, agent_id=None):
@@ -670,6 +878,7 @@ class AMoD:
 
         self.brand_momentum = {0: 0.5, 1: 0.5}
         self.trip_assignments = []
+        self._match_cache = None
         
         self.agent_acc = {agent_id: defaultdict(dict) for agent_id in self.agents}
         self.agent_dacc = {agent_id: defaultdict(dict) for agent_id in self.agents}
