@@ -151,7 +151,7 @@ class PicardSolver:
           - Seeds np.random, env._shuffle_rng, and torch with the day's seed
             so the simulation is deterministic w.r.t. the iteration index.
 
-        Returns {agent_id: alpha_ndarray}.
+        Returns {agent_id: alpha_scalar}.
         """
         seed = int(self._day_seeds[i_day])
         np.random.seed(seed)
@@ -163,7 +163,7 @@ class PicardSolver:
 
         meta_out = self._meta_forward(self._S_pred[i_day], self._z_noise[i_day])
         self._current_meta_out = meta_out
-        return {a: meta_out[a][0] for a in self.agents}
+        return {a: float(meta_out[a][0]) for a in self.agents}
 
     def record_day(self, i_day: int, env, accumulator, meta_reward: dict):
         """Capture the day's outcome.
@@ -294,7 +294,7 @@ class PicardSolver:
         rng = np.random.RandomState(self.episode_seed_base + episode_idx)
         day_seeds = rng.randint(0, 2**31 - 1, size=self.num_days)
         z_noise = [
-            {a: rng.standard_normal(self.n_regions).astype(np.float32)
+            {a: np.float32(rng.standard_normal())
              for a in self.meta_agents}
             for _ in range(self.num_days)
         ]
@@ -305,10 +305,10 @@ class PicardSolver:
 
         Pre-sampled z makes alpha a continuous deterministic function of state
         (same distribution as select_action(), just with a fixed noise draw).
-        Returns {agent_id: (alpha_ndarray, logp_scalar, value_scalar)}.
-        Agents without a meta-policy get (ones, 0.0, 0.0).
+        Returns {agent_id: (alpha_scalar, logp_scalar, value_scalar)}.
+        Agents without a meta-policy get (1.0, 0.0, 0.0).
         """
-        result = {a: (np.ones(self.n_regions, dtype=np.float32), 0.0, 0.0)
+        result = {a: (1.0, 0.0, 0.0)
                   for a in self.agents}
         for a, mp in self.meta_policies.items():
             obs_t = torch.from_numpy(prev_state.meta_obs[a]).float().unsqueeze(0).to(mp.device)

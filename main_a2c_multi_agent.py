@@ -403,14 +403,12 @@ if not args.test:
     for _a in meta_agent_set:
         if args.meta_policy == "heuristic":
             meta_policies[_a] = HeuristicMetaPolicy(
-                n_regions=env.nregion,
                 heuristic_name=args.meta_heuristic,
                 num_days=args.num_days,
             )
         else:
             meta_policies[_a] = MetaPolicy(
                 obs_dim=7,
-                n_regions=env.nregion,
                 hidden_dim=args.meta_hidden_dim,
                 lr=args.meta_lr,
                 gamma=args.meta_gamma,
@@ -447,7 +445,7 @@ if not args.test:
 
         # Meta-policy: episode-level state (reset each episode)
         meta_obs = {a: np.zeros(7, dtype=np.float32) for a in [0, 1]}
-        meta_multipliers = {a: np.ones(env.nregion) for a in [0, 1]}
+        meta_multipliers = {a: 1.0 for a in [0, 1]}
 
         if args.parallel_days:
             picard_solver.begin_episode(i_episode, env)
@@ -664,10 +662,7 @@ if not args.test:
                             for _a in [0, 1]:
                                 if _a in meta_policies:
                                     arr = np.array(action_rl[_a])
-                                    if args.od_price_actions:
-                                        action_rl[_a] = np.clip(meta_multipliers[_a][:, None] * arr, 0.0, 2.0)
-                                    else:
-                                        action_rl[_a] = np.clip(meta_multipliers[_a] * arr, 0.0, 2.0)
+                                    action_rl[_a] = np.clip(meta_multipliers[_a] * arr, 0.0, 2.0)
     
                         # Track effective prices (post-meta multiplier) during episode (mode 1)
                         for a in [0, 1]:
@@ -769,7 +764,7 @@ if not args.test:
                                 if _a in meta_policies:
                                     if args.od_price_actions:
                                         action_rl[_a][:, :env.nregion] = np.clip(
-                                            meta_multipliers[_a][:, None] * action_rl[_a][:, :env.nregion], 0.0, 2.0)
+                                            meta_multipliers[_a] * action_rl[_a][:, :env.nregion], 0.0, 2.0)
                                     else:
                                         action_rl[_a][:, 0] = np.clip(
                                             meta_multipliers[_a] * action_rl[_a][:, 0], 0.0, 2.0)
@@ -898,12 +893,17 @@ if not args.test:
 
                 if args.parallel_days:
                     # Picard path: capture day state; meta buffers filled by commit() after convergence.
-                    meta_reward = {a: accumulator.profit[a] - accumulator.reb_cost[a] for a in [0, 1]}
+                    meta_reward = {
+                        a: (accumulator.profit[a] - accumulator.reb_cost[a]) / args.reward_scalar
+                        for a in [0, 1]
+                    }
                     picard_solver.record_day(i_day, env, accumulator, meta_reward)
                 else:
                     if meta_policies:
                         for _a in meta_policies:
-                            meta_policies[_a].store_reward(accumulator.profit[_a] - accumulator.reb_cost[_a])
+                            meta_policies[_a].store_reward(
+                                (accumulator.profit[_a] - accumulator.reb_cost[_a]) / args.reward_scalar
+                            )
                     if accumulator is not None:
                         accumulator.momentum_snapshot = dict(env.brand_momentum)
                         meta_obs = {
@@ -934,7 +934,7 @@ if not args.test:
                                 day_log["day/agent0_avg_price"] = accumulator._price_sum[0] / accumulator._price_steps
                                 day_log["day/agent1_avg_price"] = accumulator._price_sum[1] / accumulator._price_steps
                             for _a in meta_policies:
-                                day_log[f"day/agent{_a}_meta_multiplier_mean"] = float(np.mean(meta_multipliers[_a]))
+                                day_log[f"day/agent{_a}_meta_multiplier"] = float(meta_multipliers[_a])
                             wandb.log(day_log)
 
             # ── end of for i_day ────────────────────────────────────────────
