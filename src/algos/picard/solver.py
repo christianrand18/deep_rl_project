@@ -134,9 +134,11 @@ class PicardSolver:
         self._k = 0
         self._day_seeds, self._z_noise = self._presample_noise(episode_idx)
         self._S_pred = self._pick_initial_guess(episode_idx)
+        self._S_old = list(self._S_pred)
         self._day_results = []
         self._delta_history = []
         self._last_result = None
+        print(f"[Picard] episode {episode_idx} begin, max_iters={self.max_iters}, tol={self.tol}")
 
     def prepare_day(self, i_day: int, env) -> dict:
         """Inject predicted state; return meta multipliers for this day.
@@ -189,18 +191,25 @@ class PicardSolver:
             meta_out=dict(self._current_meta_out),
             meta_reward=dict(meta_reward),
         ))
+        if i_day + 1 < len(self._S_pred):
+            self._S_pred[i_day + 1] = next_state
 
     def next_iteration(self, env) -> bool:
-        """Check convergence after all N days.
+        """Check convergence after all N days (Gauss-Seidel style).
 
-        Returns True  → not yet converged; S_pred updated, env reset, re-run the loop.
+        S_pred was mutated in-place by record_day during the for-loop, so the
+        state from day d propagates immediately into day d+1 within one sweep.
+
+        Returns True  → not yet converged; re-run the loop.
         Returns False → done; call commit() next.
         """
-        S_new = [self._S_pred[0]] + [r.next_state for r in self._day_results]
-        delta = self._compute_delta(S_new, self._S_pred)
+        delta = self._compute_delta(self._S_pred, self._S_old)
         self._delta_history.append(delta)
+        print(f"[Picard] iter={self._k + 1}/{self.max_iters} delta={delta:.6f} tol={self.tol:.6f}", end="")
 
         if self._converged(delta) or self._k + 1 >= self.max_iters:
+            tag = "CONVERGED" if self._converged(delta) else "MAX_ITERS"
+            print(f" -> {tag} (K={self._k + 1})")
             self._last_result = EpisodeResult(
                 day_results=list(self._day_results),
                 K_used=self._k + 1,
@@ -210,10 +219,13 @@ class PicardSolver:
             )
             return False
 
-        self._S_pred = self._update_guess(self._S_pred, S_new, self._k, self._delta_history)
+        print(" -> continue")
+        S_old_copy = self._S_old
+        self._S_pred = self._update_guess(S_old_copy, self._S_pred, self._k, self._delta_history)
+        self._S_old = list(self._S_pred)
         self._k += 1
         self._day_results = []
-        return True  # caller must call env.reset() before the next pass
+        return True
 
     def commit(self, meta_policies) -> EpisodeResult:
         """Populate meta-policy PPO buffers from the converged day results.
@@ -223,7 +235,9 @@ class PicardSolver:
         """
         if self._last_result is None:
             raise RuntimeError("commit() called before an episode completed.")
-        for result in self._last_result.day_results:
+        res = self._last_result
+        print(f"[Picard] commit: K_used={res.K_used} converged={res.converged} final_delta={res.final_delta:.6f} delta_history={[float(f'{d:.6f}') for d in res.delta_history]}")
+        for result in res.day_results:
             for a in self.meta_agents:
                 alpha, logp, value = result.meta_out[a]
                 meta_policies[a].append_transition(
@@ -233,7 +247,7 @@ class PicardSolver:
                     value=value,
                     reward=result.meta_reward.get(a, 0.0),
                 )
-        return self._last_result
+        return res
 
     # ── strategies (override to experiment) ───────────────────────────────────
 
@@ -242,15 +256,20 @@ class PicardSolver:
         return [self._zero_state() for _ in range(self.num_days + 1)]
 
     def _update_guess(self, S_old, S_new, iter_idx: int, delta_history: list) -> list:
-        """BASIC: full replace — S^(k+1) = f(S^(k)) (pure Picard)."""
+        """BASIC: identity pass (Gauss-Seidel already updated S_pred in-place).
+
+        S_last is the pre-iteration snapshot; S_cur is the post-sweep state.
+        Override to add damping: return [(1-ω)*S_old[d] + ω*S_new[d]].
+        """
         return list(S_new)
 
     def _compute_delta(self, S_new, S_old) -> float:
-        """Max-norm over (M, meta_obs) on days 1..N. Skips d=0 (fixed episode-start)."""
+        """Max-norm over brand_momentum on days 1..N. Skips d=0 (fixed episode-start)."""
         if len(S_new) <= 1:
             return 0.0
         return max(
-            float(np.max(np.abs(S_new[d].to_flat() - S_old[d].to_flat())))
+            max(abs(S_new[d].brand_momentum[a] - S_old[d].brand_momentum[a])
+                for a in self.agents)
             for d in range(1, len(S_new))
         )
 
