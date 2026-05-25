@@ -2,6 +2,7 @@
 
 ## 2026-05-25
 
+- Fix meta-policy reward normalization — rewards stored in the PPO buffer were raw daily profit (~3300/day) while the observation vector uses profit/reward_scalar (~1.65/day), causing a ~2000× scale mismatch. Dividing by reward_scalar before storage brings meta_critic_loss from ~3M to O(10–100) and stops the shared trunk from being dominated by critic gradients.
 - Simplify meta-policy output from per-region vector to global scalar — the meta observation is fully aggregated (no per-region signal), so per-region outputs were unjustified and wasted sample efficiency with only ~8 transitions per PPO update. Scalar is broadcast to all regions. Updated SPEC.md §5 to match.
 - Fix PPO log_prob bias in meta-policy — log probability is now computed on the raw (unclamped) sample; clamping to [0, 2] happens only on the value returned to the environment. Previously the log_prob was evaluated at the clamped value, giving incorrect importance ratios when actions hit the boundary.
 
