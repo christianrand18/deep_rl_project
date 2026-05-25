@@ -9,5 +9,6 @@ Tests whether Picard fixed-point iteration produces better learning than sequent
 | `run_picard_7day_bmg5.sh` | Picard 7-day, bm_gamma=5 — strong brand momentum coupling |
 | `run_picard_7day_bmg1_damped.sh` | Picard 7-day, bm_gamma=1, omega=0.7 — tests whether damped updates fix oscillation seen in bmg1 |
 | `run_picard_7day_bmg1_anderson.sh` | Picard 7-day, bm_gamma=1, Anderson acceleration m=5, tol=1e-3 — converges in K=2-3 |
+| `run_picard_7day_bmg1_anderson_tol5e3.sh` | Same as above but tol=5e-3 — tests whether looser tolerance (above noise floor) gives K=1 more often |
 
 All runs: `nyc_man_south`, mode 2, `meta_policy one`. Picard runs use `tol=1e-3`, `max_iters=10`.
