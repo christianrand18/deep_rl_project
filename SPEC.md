@@ -136,17 +136,19 @@ No auxiliary shaping terms initially. If training is unstable, consider adding a
 **Architecture:** MLP (no GCN — daily aggregated stats have no spatial graph structure).
 - Input: daily_state vector (7 scalars)
 - Hidden: 2 layers × 128 units, ReLU
-- Actor head: outputs per-region price multiplier vector α_o ∈ ℝ^{N_v}, clamped to [0.5, 2.0] via sigmoid scaling
+- Actor head: outputs a **single global price multiplier scalar** α_o ∈ ℝ, clamped to [0, 2.0] via sigmoid scaling
 - Critic head: scalar value estimate
 
+**Why scalar, not per-region vector:** The meta observation is fully aggregated (no per-region signal), so per-region outputs have no signal to differentiate regions. With only ~8 transitions per PPO update, a high-dimensional output wastes sample efficiency. The scalar is broadcast to all regions each day.
+
 **Action interface (direct constraints):**
-The meta-policy outputs a price multiplier vector α_o. At each low-level timestep, the effective price is:
+The meta-policy outputs a global scalar α_o broadcast to all regions. At each low-level timestep, the effective price is:
 
 ```
-p_effective_{i,j,o} = clamp(α_o[i] · ρ_o[i], 0, 4) · p̄_{i,j}
+p_effective_{i,j,o} = clamp(α_o · ρ_o[i], 0, 2) · p̄_{i,j}  → effective factor in [0, 4]
 ```
 
-where ρ_o[i] is the low-level policy's origin-based price scalar and p̄_{i,j} is the reference price. The multiplier applies per origin region.
+where ρ_o[i] is the low-level policy's origin-based price scalar and p̄_{i,j} is the reference price.
 
 ---
 

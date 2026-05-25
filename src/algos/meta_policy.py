@@ -5,16 +5,19 @@ import torch.optim as optim
 
 
 class MetaPolicy(nn.Module):
-    """Daily meta-policy (PPO MLP) that outputs per-region price multipliers in [0, 2].
+    """Daily meta-policy (PPO MLP) that outputs a single global price multiplier in [0, 2].
+
+    One scalar α is broadcast to all regions each day. The meta observation is fully
+    aggregated (no per-region signal), so per-region outputs are unjustified and waste
+    sample efficiency given only 7 transitions per PPO update.
 
     Operates at day frequency: one select_action() call per day, one store_reward() call
     per day, and one update() call per episode.
     """
 
-    def __init__(self, obs_dim, n_regions, hidden_dim=128, lr=3e-4, gamma=0.99,
+    def __init__(self, obs_dim, hidden_dim=128, lr=3e-4, gamma=0.99,
                  clip_eps=0.2, n_ppo_epochs=4, device='cpu'):
         super().__init__()
-        self.n_regions = n_regions
         self.gamma = gamma
         self.clip_eps = clip_eps
         self.n_ppo_epochs = n_ppo_epochs
@@ -24,10 +27,10 @@ class MetaPolicy(nn.Module):
             nn.Linear(obs_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
         )
-        # Actor: mean ∈ (0, 2) via 2*sigmoid; learnable log_std for exploration
-        self.actor_head = nn.Linear(hidden_dim, n_regions)
+        # Actor: mean ∈ (0, 2) via 2*sigmoid; single learnable log_std
+        self.actor_head = nn.Linear(hidden_dim, 1)
         self.critic_head = nn.Linear(hidden_dim, 1)
-        self.log_std = nn.Parameter(torch.full((n_regions,), -0.6931))  # std ≈ 0.5 initially
+        self.log_std = nn.Parameter(torch.tensor([-0.6931]))  # std ≈ 0.5 initially
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
@@ -46,21 +49,21 @@ class MetaPolicy(nn.Module):
         value = self.critic_head(x).squeeze(-1)
         return mean, std, value
 
-    def select_action(self, obs: np.ndarray) -> np.ndarray:
-        """Returns price multipliers in [0, 2] and stores transition in buffers."""
+    def select_action(self, obs: np.ndarray) -> float:
+        """Returns a single global price multiplier in [0, 2] and stores transition."""
         obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
         with torch.no_grad():
             mean, std, value = self._forward(obs_t)
         dist = torch.distributions.Normal(mean, std)
-        action = dist.sample().clamp(0.0, 2.0)
-        logp = dist.log_prob(action).sum(-1)
+        raw_action = dist.sample()
+        logp = dist.log_prob(raw_action).sum(-1)
 
         self.obs_buf.append(obs_t)
-        self.act_buf.append(action)
+        self.act_buf.append(raw_action)
         self.logp_buf.append(logp)
         self.val_buf.append(value)
 
-        return action.squeeze(0).cpu().numpy()
+        return float(raw_action.clamp(0.0, 2.0).squeeze().item())
 
     def store_reward(self, reward: float):
         self.rew_buf.append(float(reward))
@@ -136,13 +139,12 @@ class HeuristicMetaPolicy:
       - "schedule_undercut_exploit": α = 0.5 for first half of episode days, α = 1.5 thereafter.
     """
 
-    def __init__(self, n_regions: int, heuristic_name: str, num_days: int):
-        self.n_regions = n_regions
+    def __init__(self, heuristic_name: str, num_days: int):
         self.heuristic_name = heuristic_name
         self.num_days = max(1, num_days)
         self._day_idx = 0  # within-episode counter; wraps every num_days calls
 
-    def select_action(self, obs):
+    def select_action(self, obs) -> float:
         d = self._day_idx
         if self.heuristic_name == "const_1":
             alpha = 1.0
@@ -156,7 +158,7 @@ class HeuristicMetaPolicy:
         else:
             raise ValueError(f"Unknown heuristic: {self.heuristic_name}")
         self._day_idx = (self._day_idx + 1) % self.num_days
-        return np.full(self.n_regions, alpha, dtype=np.float32)
+        return float(alpha)
 
     def store_reward(self, reward: float):
         pass

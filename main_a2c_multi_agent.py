@@ -402,14 +402,12 @@ if not args.test:
     for _a in meta_agent_set:
         if args.meta_policy == "heuristic":
             meta_policies[_a] = HeuristicMetaPolicy(
-                n_regions=env.nregion,
                 heuristic_name=args.meta_heuristic,
                 num_days=args.num_days,
             )
         else:
             meta_policies[_a] = MetaPolicy(
                 obs_dim=7,
-                n_regions=env.nregion,
                 hidden_dim=args.meta_hidden_dim,
                 lr=args.meta_lr,
                 gamma=args.meta_gamma,
@@ -487,7 +485,7 @@ if not args.test:
 
         # Meta-policy: episode-level state (reset each episode)
         meta_obs = {a: np.zeros(7, dtype=np.float32) for a in [0, 1]}
-        meta_multipliers = {a: np.ones(env.nregion) for a in [0, 1]}
+        meta_multipliers = {a: 1.0 for a in [0, 1]}
 
         for i_day in range(args.num_days):
             if i_day > 0:
@@ -641,17 +639,14 @@ if not args.test:
                         for _a in meta_policies:
                             action_rl[_a] = lo + (hi - lo) * np.array(action_rl[_a])
 
-                    # Apply meta multipliers to mode 1 pricing actions
+                    # Apply meta multiplier to mode 1 pricing actions
                     # Low-level scalar ρ ∈ [0, 1] (env scales by 2 → factor [0, 2])
-                    # Meta multiplier α ∈ [0, 2]; combined α·ρ clipped to [0, 2] → factor [0, 4]
+                    # Meta multiplier α ∈ [0, 2] (global scalar); combined α·ρ clipped to [0, 2] → factor [0, 4]
                     if meta_policies:
                         for _a in [0, 1]:
                             if _a in meta_policies:
                                 arr = np.array(action_rl[_a])
-                                if args.od_price_actions:
-                                    action_rl[_a] = np.clip(meta_multipliers[_a][:, None] * arr, 0.0, 2.0)
-                                else:
-                                    action_rl[_a] = np.clip(meta_multipliers[_a] * arr, 0.0, 2.0)
+                                action_rl[_a] = np.clip(meta_multipliers[_a] * arr, 0.0, 2.0)
 
                     # Track effective prices (post-meta multiplier) during episode (mode 1)
                     for a in [0, 1]:
@@ -745,15 +740,15 @@ if not args.test:
                             else:
                                 action_rl[_a][:, 0] = lo + (hi - lo) * np.array(action_rl[_a][:, 0])
 
-                    # Apply meta multipliers to mode 2 pricing actions (price column only)
+                    # Apply meta multiplier to mode 2 pricing actions (price column only)
                     # Low-level scalar ρ ∈ [0, 1] (env scales by 2 → factor [0, 2])
-                    # Meta multiplier α ∈ [0, 2]; combined α·ρ clipped to [0, 2] → factor [0, 4]
+                    # Meta multiplier α ∈ [0, 2] (global scalar); combined α·ρ clipped to [0, 2] → factor [0, 4]
                     if meta_policies:
                         for _a in [0, 1]:
                             if _a in meta_policies:
                                 if args.od_price_actions:
                                     action_rl[_a][:, :env.nregion] = np.clip(
-                                        meta_multipliers[_a][:, None] * action_rl[_a][:, :env.nregion], 0.0, 2.0)
+                                        meta_multipliers[_a] * action_rl[_a][:, :env.nregion], 0.0, 2.0)
                                 else:
                                     action_rl[_a][:, 0] = np.clip(
                                         meta_multipliers[_a] * action_rl[_a][:, 0], 0.0, 2.0)
@@ -920,7 +915,7 @@ if not args.test:
                         day_log["day/agent0_avg_price"] = accumulator._price_sum[0] / accumulator._price_steps
                         day_log["day/agent1_avg_price"] = accumulator._price_sum[1] / accumulator._price_steps
                     for _a in meta_policies:
-                        day_log[f"day/agent{_a}_meta_multiplier_mean"] = float(np.mean(meta_multipliers[_a]))
+                        day_log[f"day/agent{_a}_meta_multiplier"] = float(meta_multipliers[_a])
                     wandb.log(day_log)
 
         # Update both agent models after episode and collect training metrics

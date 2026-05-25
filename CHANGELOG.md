@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-25
+
+- Simplify meta-policy output from per-region vector to global scalar — the meta observation is fully aggregated (no per-region signal), so per-region outputs were unjustified and wasted sample efficiency with only ~8 transitions per PPO update. Scalar is broadcast to all regions. Updated SPEC.md §5 to match.
+- Fix PPO log_prob bias in meta-policy — log probability is now computed on the raw (unclamped) sample; clamping to [0, 2] happens only on the value returned to the environment. Previously the log_prob was evaluated at the clamped value, giving incorrect importance ratios when actions hit the boundary.
+
 ## 2026-05-24
 
 - Speedup: Add or-tools min-cost-flow rebalancing solver (`solveRebFlow_ortools`, default via `--reb_solver ortools`).
