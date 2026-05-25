@@ -126,6 +126,7 @@ class PicardSolver:
         self._current_meta_out: dict = {}
         self._current_prev_state: Optional[DayState] = None
         self._last_result: Optional[EpisodeResult] = None
+        self._prev_S: Optional[list] = None
 
     # ── coordinator API ───────────────────────────────────────────────────────
 
@@ -210,6 +211,7 @@ class PicardSolver:
         if self._converged(delta) or self._k + 1 >= self.max_iters:
             tag = "CONVERGED" if self._converged(delta) else "MAX_ITERS"
             print(f" -> {tag} (K={self._k + 1})")
+            self._prev_S = list(self._S_pred)
             self._last_result = EpisodeResult(
                 day_results=list(self._day_results),
                 K_used=self._k + 1,
@@ -252,7 +254,9 @@ class PicardSolver:
     # ── strategies (override to experiment) ───────────────────────────────────
 
     def _pick_initial_guess(self, episode_idx: int) -> list:
-        """BASIC: zero-init. M=0.5, meta_obs zeros for every day."""
+        """Warm-start from previous episode's converged state, or zero-init if none."""
+        if self._prev_S is not None:
+            return list(self._prev_S)
         return [self._zero_state() for _ in range(self.num_days + 1)]
 
     def _update_guess(self, S_old, S_new, iter_idx: int, delta_history: list) -> list:
@@ -294,7 +298,7 @@ class PicardSolver:
         rng = np.random.RandomState(self.episode_seed_base + episode_idx)
         day_seeds = rng.randint(0, 2**31 - 1, size=self.num_days)
         z_noise = [
-            {a: np.float32(rng.standard_normal())
+            {a: np.array(rng.standard_normal(), dtype=np.float32)
              for a in self.meta_agents}
             for _ in range(self.num_days)
         ]
