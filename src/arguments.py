@@ -355,6 +355,18 @@ class A2CArgumentBuilder:
 		parser.add_argument("--reb_solver", type=str, default="ortools",
 			choices=["ortools", "pulp"],
 			help="Rebalancing LP backend: ortools (fast min-cost-flow, default) or pulp (legacy CPLEX).")
+		# ── Picard parallel-days ──────────────────────────────────────────────
+		parser.add_argument(
+			"--parallel_days",
+			action="store_true",
+			default=False,
+			help="Enable Picard fixed-point parallelisation of the multi-day loop. "
+			     "Requires --num_days > 1. No-op when num_days == 1.",
+		)
+		parser.add_argument("--picard_max_iters", type=int, default=6,
+			help="Maximum Picard iterations per episode (default: 6).")
+		parser.add_argument("--picard_tol", type=float, default=1e-3,
+			help="Convergence tolerance for Picard iteration (max-norm on state; default: 1e-3).")
 		return parser
 
 	@classmethod

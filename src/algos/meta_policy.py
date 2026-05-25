@@ -65,6 +65,20 @@ class MetaPolicy(nn.Module):
     def store_reward(self, reward: float):
         self.rew_buf.append(float(reward))
 
+    def append_transition(self, obs: np.ndarray, act: np.ndarray,
+                          logp: float, value: float, reward: float):
+        """Explicitly append a pre-computed transition to the PPO buffers.
+
+        Used by PicardSolver.commit() to populate buffers from converged
+        day results instead of going through select_action() + store_reward().
+        """
+        obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
+        self.obs_buf.append(obs_t)
+        self.act_buf.append(torch.FloatTensor(act).unsqueeze(0).to(self.device))
+        self.logp_buf.append(torch.tensor(logp, dtype=torch.float32).to(self.device))
+        self.val_buf.append(torch.tensor(value, dtype=torch.float32).unsqueeze(0).to(self.device))
+        self.rew_buf.append(float(reward))
+
     def update(self) -> dict:
         """PPO update using one episode's worth of daily transitions."""
         if not self.rew_buf:
