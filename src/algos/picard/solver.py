@@ -1,5 +1,9 @@
 """Picard fixed-point iteration coordinator for multi-day episode rollouts.
 
+Pure Jacobi: all N days read from the same S_pred snapshot, run independently
+(parallelizable), then S_pred is replaced with S_new = f(S_old).  Correctness
+propagates one day per iteration, guaranteeing convergence in ≤ N iterations.
+
 See SPEC.md §7 for the math. The solver is a *coordinator*, not a simulator:
 the day simulation stays in main_a2c_multi_agent.py unchanged. The solver only
 manages four injection points around the existing day loop:
@@ -101,7 +105,9 @@ class PicardSolver:
 
     def __init__(self, env, meta_policies, model_agents, args,
                  max_iters: int = 6, tol: float = 1e-3,
-                 episode_seed_base: int = 12345):
+                 episode_seed_base: int = 12345,
+                 update_strategy: str = 'analytic',
+                 omega: float = 1.0):
         self.env = env
         self.meta_policies = meta_policies or {}
         self.model_agents = model_agents
@@ -115,6 +121,8 @@ class PicardSolver:
         self.max_iters = max_iters
         self.tol = tol
         self.episode_seed_base = episode_seed_base
+        self._update_strategy = update_strategy
+        self._omega = omega
 
         # Per-episode state (reset by begin_episode)
         self._k: int = 0
@@ -139,7 +147,6 @@ class PicardSolver:
         self._day_results = []
         self._delta_history = []
         self._last_result = None
-        print(f"[Picard] episode {episode_idx} begin, max_iters={self.max_iters}, tol={self.tol}")
 
     def prepare_day(self, i_day: int, env) -> dict:
         """Inject predicted state; return meta multipliers for this day.
@@ -192,26 +199,22 @@ class PicardSolver:
             meta_out=dict(self._current_meta_out),
             meta_reward=dict(meta_reward),
         ))
-        if i_day + 1 < len(self._S_pred):
-            self._S_pred[i_day + 1] = next_state
 
     def next_iteration(self, env) -> bool:
-        """Check convergence after all N days (Gauss-Seidel style).
+        """Check convergence after all N days (Jacobi).
 
-        S_pred was mutated in-place by record_day during the for-loop, so the
-        state from day d propagates immediately into day d+1 within one sweep.
+        All days were computed from the same S_old snapshot.  Build S_new from
+        day results, compare brand_momentum, replace S_pred if not converged.
 
         Returns True  → not yet converged; re-run the loop.
         Returns False → done; call commit() next.
         """
-        delta = self._compute_delta(self._S_pred, self._S_old)
+        S_new = [self._S_pred[0]] + [r.next_state for r in self._day_results]
+        delta = self._compute_delta(S_new, self._S_old)
         self._delta_history.append(delta)
-        print(f"[Picard] iter={self._k + 1}/{self.max_iters} delta={delta:.6f} tol={self.tol:.6f}", end="")
 
         if self._converged(delta) or self._k + 1 >= self.max_iters:
-            tag = "CONVERGED" if self._converged(delta) else "MAX_ITERS"
-            print(f" -> {tag} (K={self._k + 1})")
-            self._prev_S = list(self._S_pred)
+            self._prev_S = list(S_new)
             self._last_result = EpisodeResult(
                 day_results=list(self._day_results),
                 K_used=self._k + 1,
@@ -221,9 +224,9 @@ class PicardSolver:
             )
             return False
 
-        print(" -> continue")
+        np.random.seed(0)
         S_old_copy = self._S_old
-        self._S_pred = self._update_guess(S_old_copy, self._S_pred, self._k, self._delta_history)
+        self._S_pred = self._update_guess(S_old_copy, S_new, self._k, self._delta_history)
         self._S_old = list(self._S_pred)
         self._k += 1
         self._day_results = []
@@ -238,7 +241,6 @@ class PicardSolver:
         if self._last_result is None:
             raise RuntimeError("commit() called before an episode completed.")
         res = self._last_result
-        print(f"[Picard] commit: K_used={res.K_used} converged={res.converged} final_delta={res.final_delta:.6f} delta_history={[float(f'{d:.6f}') for d in res.delta_history]}")
         for result in res.day_results:
             for a in self.meta_agents:
                 alpha, logp, value = result.meta_out[a]
@@ -260,12 +262,62 @@ class PicardSolver:
         return [self._zero_state() for _ in range(self.num_days + 1)]
 
     def _update_guess(self, S_old, S_new, iter_idx: int, delta_history: list) -> list:
-        """BASIC: identity pass (Gauss-Seidel already updated S_pred in-place).
+        """Dispatch to the configured update strategy.
 
-        S_last is the pre-iteration snapshot; S_cur is the post-sweep state.
-        Override to add damping: return [(1-ω)*S_old[d] + ω*S_new[d]].
+        S_old: previous S_pred (len N+1); BM_in[d] = S_old[d].brand_momentum.
+        S_new: result of running all days with S_old (len N+1); BM_out[d] = S_new[d+1].brand_momentum.
+
+        Add new strategies as _<name>_update_guess methods and set update_strategy accordingly.
+        """
+        if self._update_strategy == 'jacobi':
+            return self._jacobi_update_guess(S_old, S_new, iter_idx, delta_history)
+        elif self._update_strategy == 'analytic':
+            return self._analytic_update_guess(S_old, S_new, iter_idx, delta_history)
+        else:
+            raise ValueError(f"[Picard] Unknown update_strategy: {self._update_strategy!r}")
+
+    def _jacobi_update_guess(self, S_old, S_new, _iter_idx: int, _delta_history: list) -> list:
+        """Pure Jacobi: full replace — S^(k+1) = S_new.
+
+        Converges in exactly N+1 iterations for a causal chain of N days (cold start).
         """
         return list(S_new)
+
+    def _analytic_update_guess(self, S_old, S_new, _iter_idx: int, _delta_history: list) -> list:
+        """Tier 1: analytically propagate BM forward using observed market shares.
+
+        Assumption: market_share[d] is approximately independent of BM_in[d].
+        This holds when bm_gamma (the BM coefficient in the MNL utility) is small,
+        i.e. BM has weak direct effect on passenger choice within a day.
+
+        After one parallel run we have observed market_share[d] for all d. Instead
+        of propagating these one step at a time (Jacobi), we apply the EMA formula
+        sequentially with the observed market shares to get a corrected BM trajectory
+        in a single pass — fixing all N days at once rather than one per iteration.
+
+        meta_obs is carried unchanged from S_new (computed under the old BM_in; it
+        lags by one Picard iteration but converges quickly in 1-2 extra iterations).
+
+        omega < 1 damps the update: BM_final = (1-ω)·BM_old + ω·BM_analytic, which
+        prevents oscillation when the BM→market_share feedback is non-negligible.
+        """
+        lam = self.env.bm_lambda
+        market_shares = self._compute_market_shares(S_old, S_new)
+
+        result = [S_new[0]]  # S[0] is always fixed (true episode start)
+        bm_current = dict(S_new[0].brand_momentum)
+
+        for d in range(self.num_days):
+            ms = market_shares[d]
+            bm_next = {a: lam * bm_current[a] + (1 - lam) * ms[a] for a in self.agents}
+            bm_next = self._apply_damping(bm_next, S_old[d + 1].brand_momentum)
+            result.append(DayState(
+                brand_momentum=bm_next,
+                meta_obs=dict(S_new[d + 1].meta_obs),
+            ))
+            bm_current = bm_next
+
+        return result
 
     def _compute_delta(self, S_new, S_old) -> float:
         """Max-norm over brand_momentum on days 1..N. Skips d=0 (fixed episode-start)."""
@@ -279,6 +331,39 @@ class PicardSolver:
 
     def _converged(self, delta: float) -> bool:
         return delta < self.tol
+
+    def _apply_damping(self, bm_new: dict, bm_old: dict) -> dict:
+        """Mix bm_new toward bm_old: BM_final = (1-ω)·BM_old + ω·BM_new.
+
+        With omega=1.0 (default) this is a no-op. Set omega < 1 to dampen
+        oscillation when the BM→market_share feedback causes cycling.
+        """
+        if self._omega >= 1.0:
+            return bm_new
+        return {a: (1.0 - self._omega) * bm_old[a] + self._omega * bm_new[a]
+                for a in self.agents}
+
+    def _compute_market_shares(self, S_old, S_new) -> list:
+        """Back-calculate observed market share for each day from BM in/out.
+
+        Uses the EMA formula: BM[d+1] = λ·BM[d] + (1-λ)·ms[d], solved for ms:
+            ms[d][a] = (BM_out[a] - λ·BM_in[a]) / (1-λ)
+
+        where BM_in[d] = S_old[d].brand_momentum and BM_out[d] = S_new[d+1].brand_momentum.
+
+        Returns list of length num_days: [{agent_id: float}, ...].
+        """
+        lam = self.env.bm_lambda
+        one_minus_lam = 1.0 - lam
+        market_shares = []
+        for d in range(self.num_days):
+            bm_in = S_old[d].brand_momentum
+            bm_out = S_new[d + 1].brand_momentum
+            market_shares.append({
+                a: (bm_out[a] - lam * bm_in[a]) / one_minus_lam
+                for a in self.agents
+            })
+        return market_shares
 
     # ── building blocks ───────────────────────────────────────────────────────
 

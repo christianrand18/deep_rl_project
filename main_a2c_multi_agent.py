@@ -426,7 +426,9 @@ if not args.test:
     # Picard coordinator (only allocated when --parallel_days is set)
     picard_solver = (
         PicardSolver(env, meta_policies, model_agents, args,
-                     max_iters=args.picard_max_iters, tol=args.picard_tol)
+                     max_iters=args.picard_max_iters, tol=args.picard_tol,
+                     update_strategy=args.picard_update_strategy,
+                     omega=args.picard_omega)
         if args.parallel_days else None
     )
 
@@ -952,9 +954,10 @@ if not args.test:
             meta_obs = {a: picard_result.day_results[-1].next_state.meta_obs[a] for a in [0, 1]}
             if not args.test:
                 wandb.log({
-                    "picard/K_used": picard_result.K_used,
-                    "picard/final_delta": picard_result.final_delta,
-                    "picard/converged": int(picard_result.converged),
+                    "debug/picard_K_used": picard_result.K_used,
+                    "debug/picard_converged": int(picard_result.converged),
+                    "debug/picard_delta_i1": picard_result.delta_history[0] if picard_result.delta_history else 0.0,
+                    "debug/picard_final_delta": picard_result.final_delta,
                     "episode": i_episode + 1,
                 })
 
