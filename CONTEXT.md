@@ -64,3 +64,17 @@ The fixed-size 7-element input vector to the meta-policy, aggregated after each 
 
 **Daily Profit** (`R_meta(d)`)
 The meta-policy reward: total operator profit (pax revenue minus rebalancing cost) accumulated over all timesteps in day `d`.
+
+**Price Scalar** (`ρ_o[i]`)
+The low-level policy's raw per-origin pricing output, a Beta sample in `(0, 1)`. This is what the agent directly controls.
+_Avoid_: using "price scalar" to mean the multiple-of-baseline the passenger sees — that is the Price Factor.
+
+**Price Factor**
+The multiple of the baseline reference price `p̄` that a passenger actually faces: `2·ρ` in the baseline (range `[0, 2]`). Distinct from the Price Scalar by the env's built-in `2×` scaling.
+_Avoid_: conflating with Price Scalar.
+
+**Meta Multiplier** (`α`, `multiplier` mode)
+A daily scalar in `[0, 2]` applied multiplicatively on top of the low-level: effective scalar = `clamp(α·ρ, 0, 2)`. Here α scales the Price Scalar.
+
+**Meta Target** (`α` / `β`, `cap`/`soft`/`goal` modes)
+The same daily `[0, 2]` action reinterpreted as a *target Price Factor* — the average `2·ρ` the meta wants the low-level to hit. Not a multiplier; it is in Price-Factor units, so the full `[0, 2]` range is reachable by the low-level and there is no `4×` premium regime.

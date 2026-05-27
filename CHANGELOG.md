@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-05-27
+
+- Add `--meta_action_mode {multiplier,cap,soft,goal}` to fix low-level compensation against the meta-policy. `multiplier` (default) is unchanged; `cap` is a ceiling-only constraint (`min(ρ,α)` when α<1); `soft`/`goal` drop the multiplier and reinterpret α as a target price *factor* (2ρ), shaping the low-level reward toward it (penalty / saturating intrinsic, in post-scaling units). soft/goal additionally condition both `GNNActor` and `GNNCritic` on the daily target via a zero-init `lin_alpha` layer (no-op when target is `None`, so old checkpoints load unchanged). Guarded to mode-2 origin pricing with an active meta-policy; env untouched. W&B `job_type` now encodes the (mode, λ) variant for seed aggregation. See `Investigations/2026-05-25_compensation-fix-spec.md`.
+
 ## 2026-05-25
 
 - Fix meta-policy reward normalization — rewards stored in the PPO buffer were raw daily profit (~3300/day) while the observation vector uses profit/reward_scalar (~1.65/day), causing a ~2000× scale mismatch. Dividing by reward_scalar before storage brings meta_critic_loss from ~3M to O(10–100) and stops the shared trunk from being dominated by critic gradients.

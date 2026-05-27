@@ -196,8 +196,16 @@ class A2C(nn.Module):
         self.saved_actions = []
         self.rewards = []
         self.concentration_history = []  # Track concentration parameters per step
-        
+        self._meta_target = None  # daily meta target for soft/goal conditioning; None = off
+
         self.to(self.device)
+
+    def set_meta_target(self, target):
+        """Set the daily meta target used to condition actor/critic (soft/goal modes).
+
+        Pass None to disable conditioning (multiplier/cap modes and the baseline).
+        """
+        self._meta_target = target
 
     def parse_obs(self, obs):
         state = self.obs_parser.parse_obs(obs)
@@ -206,8 +214,8 @@ class A2C(nn.Module):
     # Combines select action and forward steps of actor and critic
     def select_action(self, obs, deterministic=False, return_concentration=False):
         state = self.parse_obs(obs).to(self.device)
-        a, logprob, concentration = self.actor(state, deterministic=deterministic)
-        value = self.critic(state)
+        a, logprob, concentration = self.actor(state, deterministic=deterministic, meta_target=self._meta_target)
+        value = self.critic(state, meta_target=self._meta_target)
         
         # Only save actions for training (when not deterministic)
         if not deterministic:

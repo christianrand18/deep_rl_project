@@ -16,13 +16,25 @@ class GNNCritic(nn.Module):
         self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
-    
-    def forward(self, data):
+        # Meta-target conditioning (soft/goal modes). Zero-initialized so that with
+        # meta_target=None — or at load time — the critic reproduces baseline behavior.
+        self.lin_alpha = nn.Linear(1, hidden_size)
+        nn.init.zeros_(self.lin_alpha.weight)
+        nn.init.zeros_(self.lin_alpha.bias)
+
+    def _apply_meta_target(self, x, meta_target):
+        if meta_target is None:
+            return x
+        t = torch.as_tensor(meta_target, dtype=x.dtype, device=x.device).reshape(1, 1, 1)
+        return x + self.lin_alpha(t)
+
+    def forward(self, data, meta_target=None):
         out = F.relu(self.conv1(data.x, data.edge_index))
         x = out + data.x
         x = x.reshape(-1, self.act_dim, self.in_channels)
         x = F.relu(self.lin1(x))
         x = F.relu(self.lin2(x))
+        x = self._apply_meta_target(x, meta_target)
         x = torch.sum(x, dim=1)
         x = self.lin3(x)
         x = x.squeeze(0)
@@ -36,7 +48,12 @@ class GNNActor(nn.Module):
         self.act_dim = act_dim
         self.od_price_actions = od_price_actions
         self.conv1 = GCNConv(in_channels, in_channels)
-        
+        # Meta-target conditioning (soft/goal modes). Zero-initialized so that with
+        # meta_target=None — or at load time — the actor reproduces baseline behavior.
+        self.lin_alpha = nn.Linear(1, hidden_size)
+        nn.init.zeros_(self.lin_alpha.weight)
+        nn.init.zeros_(self.lin_alpha.bias)
+
         # Calculate output dimensions based on mode and OD pricing
         if mode == 0:
             # Mode 0: rebalancing only — single MLP
@@ -60,7 +77,13 @@ class GNNActor(nn.Module):
             else:
                 self.lin3 = nn.Linear(hidden_size, 3)  # 2 Beta params + 1 Dirichlet param
 
-    def forward(self, data, deterministic=False):
+    def _apply_meta_target(self, x, meta_target):
+        if meta_target is None:
+            return x
+        t = torch.as_tensor(meta_target, dtype=x.dtype, device=x.device).reshape(1, 1, 1)
+        return x + self.lin_alpha(t)
+
+    def forward(self, data, deterministic=False, meta_target=None):
         out = F.relu(self.conv1(data.x, data.edge_index))
         x = out + data.x
         x = x.reshape(-1, self.act_dim, self.in_channels)
@@ -87,6 +110,7 @@ class GNNActor(nn.Module):
             # Shared MLP for pricing and rebalancing
             x = F.leaky_relu(self.lin1(x))
             x = F.leaky_relu(self.lin2(x))
+            x = self._apply_meta_target(x, meta_target)
             x = F.softplus(self.lin3(x))
             if self.od_price_actions:
                 assert x.shape == (1, self.act_dim, 2 * self.act_dim + 1), f"Mode 2 OD: Expected shape (1, {self.act_dim}, {2*self.act_dim+1}), got {x.shape}"

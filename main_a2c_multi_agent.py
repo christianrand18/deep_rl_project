@@ -55,6 +55,30 @@ if args.od_price_actions and not args.od_price_observe:
     print_od_price_observe_notice()
     args.od_price_observe = True
 
+# Validate meta_action_mode scope: cap/soft/goal are implemented for mode-2 origin
+# pricing under an active meta-policy only. Fail loudly at startup, not mid-run.
+if args.meta_action_mode != "multiplier":
+    if args.mode != 2:
+        raise ValueError(
+            f"--meta_action_mode {args.meta_action_mode} requires --mode 2 "
+            f"(got mode {args.mode})."
+        )
+    if args.od_price_actions:
+        raise ValueError(
+            f"--meta_action_mode {args.meta_action_mode} requires origin pricing; "
+            f"remove --od_price_actions."
+        )
+    if args.num_days <= 1:
+        raise ValueError(
+            f"--meta_action_mode {args.meta_action_mode} requires --num_days > 1 "
+            f"(got {args.num_days})."
+        )
+    if args.meta_policy == "none":
+        raise ValueError(
+            f"--meta_action_mode {args.meta_action_mode} requires an active meta-policy "
+            f"(--meta_policy one/both/heuristic)."
+        )
+
 # Set device
 args.cuda = args.cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
@@ -270,6 +294,15 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
         )
 
 
+# W&B job_type = the (mode, lambda) variant, so runs nest as group -> job_type -> seed
+# and the UI can aggregate seeds into mean/std bands with one group-by.
+if args.meta_action_mode == "soft":
+    meta_job_type = f"soft_l{args.meta_reg_lambda}"
+elif args.meta_action_mode == "goal":
+    meta_job_type = f"goal_l{args.meta_align_lambda}"
+else:
+    meta_job_type = args.meta_action_mode  # multiplier / cap
+
 # Set up weights and biases (only for training mode)
 if not args.test:
     wandb.init(
@@ -277,6 +310,7 @@ if not args.test:
         project="deep_RL_project",
         name=args.checkpoint_path,
         group=args.wandb_group,
+        job_type=meta_job_type,
         config=args,
     )
 
@@ -469,6 +503,7 @@ if not args.test:
             episode_unprofitable_trips = {0: 0, 1: 0}
             actions_price = {0: [], 1: []}
             actions_effective_price = {0: [], 1: []}
+            meta_shaping_term = {0: [], 1: []}  # post-scale λ·(·) shaping reward per step (soft/goal)
             episode_logprobs = {0: [], 1: []}
             if env.mode == 0:
                 actions_concentration_dirichlet = {0: [], 1: []}
@@ -506,6 +541,7 @@ if not args.test:
                     action_rl = {a: [0.0] * env.nregion for a in [0, 1]}
                 day_served = {0: 0, 1: 0}
                 day_total_demand = 0
+                day_price_raw = {0: [], 1: []}  # per-day raw ρ (pre-composition) for corr diagnostics
                 # Snapshot episode_reward at day start so we can compute per-day step-reward sum
                 # for reward-attribution debug logging (compare to day/agent{a}_daily_profit).
                 day_reward_start = dict(episode_reward)
@@ -522,7 +558,10 @@ if not args.test:
                 elif meta_policies:
                     for _a in meta_policies:
                         meta_multipliers[_a] = meta_policies[_a].select_action(meta_obs[_a])
-    
+                        # soft/goal: condition the low-level on the daily target.
+                        if args.meta_action_mode in ("soft", "goal") and _a in model_agents:
+                            model_agents[_a].set_meta_target(meta_multipliers[_a])
+
                 while not done:
                     # Capture prices about to be submitted (for accumulator tracking)
                     if meta_policies and env.mode in [1, 2] and step > 0:
@@ -719,7 +758,13 @@ if not args.test:
                                     actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, :env.nregion]))
                                 else:
                                     actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
-                        
+
+                        # Per-day raw price scalar (pre-composition) for the corr(α, raw ρ) diagnostic
+                        if not args.od_price_actions:
+                            for a in [0, 1]:
+                                if a != args.fix_agent:
+                                    day_price_raw[a].append(float(np.mean(np.array(action_rl[a])[:, 0])))
+
                         # Track concentration (mode 2: Beta + Dirichlet)
                         for a in [0, 1]:
                             if a != args.fix_agent:
@@ -756,16 +801,28 @@ if not args.test:
                                 else:
                                     action_rl[_a][:, 0] = lo + (hi - lo) * np.array(action_rl[_a][:, 0])
     
-                        # Apply meta multipliers to mode 2 pricing actions (price column only)
-                        # Low-level scalar ρ ∈ [0, 1] (env scales by 2 → factor [0, 2])
-                        # Meta multiplier α ∈ [0, 2]; combined α·ρ clipped to [0, 2] → factor [0, 4]
+                        # Compose the meta action into the mode-2 price column.
+                        # Low-level scalar ρ ∈ [0, 1] (env scales by 2 → factor [0, 2]).
+                        #   multiplier (baseline): effective = clip(α·ρ, 0, 2)  → factor [0, 4]
+                        #   cap (ceiling-only):    effective = min(ρ, α) if α<1 else ρ
+                        #   soft/goal:             α is a target price factor, not a multiplier;
+                        #                          ρ passes through unscaled (shaping done in the reward).
+                        # cap/soft/goal are guarded to mode-2 origin pricing, so the od_price path
+                        # below stays multiplier-only.
                         if meta_policies:
                             for _a in [0, 1]:
                                 if _a in meta_policies:
                                     if args.od_price_actions:
                                         action_rl[_a][:, :env.nregion] = np.clip(
                                             meta_multipliers[_a] * action_rl[_a][:, :env.nregion], 0.0, 2.0)
-                                    else:
+                                    elif args.meta_action_mode == "cap":
+                                        alpha = meta_multipliers[_a]
+                                        if alpha < 1.0:
+                                            action_rl[_a][:, 0] = np.minimum(action_rl[_a][:, 0], alpha)
+                                        # alpha >= 1: no constraint
+                                    elif args.meta_action_mode in ("soft", "goal"):
+                                        pass  # target, not multiplier — ρ passes through
+                                    else:  # multiplier
                                         action_rl[_a][:, 0] = np.clip(
                                             meta_multipliers[_a] * action_rl[_a][:, 0], 0.0, 2.0)
     
@@ -808,8 +865,21 @@ if not args.test:
                     
                         episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
                         for agent_id in [0, 1]:
-                            model_agents[agent_id].rewards.append((paxreward[agent_id] + rebreward[agent_id]))
-                    
+                            r = paxreward[agent_id] + rebreward[agent_id]
+                            # soft/goal: shape the meta agent's reward toward the target price
+                            # factor (2·mean(ρ)). Pre-multiply by reward_scale so that after
+                            # training_step's /reward_scale the term lands at λ·(·) (post-scale units).
+                            if agent_id in meta_policies and args.meta_action_mode in ("soft", "goal"):
+                                rho_factor = 2.0 * float(np.mean(np.array(action_rl[agent_id])[:, 0]))
+                                target = meta_multipliers[agent_id]
+                                if args.meta_action_mode == "soft":
+                                    shaped = -args.meta_reg_lambda * (rho_factor - target) ** 2
+                                else:  # goal
+                                    shaped = args.meta_align_lambda * max(0.0, 1.0 - abs(rho_factor - target))
+                                r += model_agents[agent_id].reward_scale * shaped
+                                meta_shaping_term[agent_id].append(shaped)
+                            model_agents[agent_id].rewards.append(r)
+
                     elif env.mode == 3:
                         # === BASELINE MODE: No rebalancing, fixed prices ===
                         # Use fixed price (scalar = 0.5 for both agents)
@@ -935,6 +1005,8 @@ if not args.test:
                                 day_log["day/agent1_avg_price"] = accumulator._price_sum[1] / accumulator._price_steps
                             for _a in meta_policies:
                                 day_log[f"day/agent{_a}_meta_multiplier"] = float(meta_multipliers[_a])
+                                if len(day_price_raw[_a]) > 0:
+                                    day_log[f"day/agent{_a}_avg_price_raw"] = float(np.mean(day_price_raw[_a]))
                             wandb.log(day_log)
 
             # ── end of for i_day ────────────────────────────────────────────
@@ -1009,10 +1081,12 @@ if not args.test:
         # Calculate mean price scalar per agent (for modes 1 and 2)
         mean_price_scalar = {0: 0, 1: 0}
         mean_effective_price_scalar = {0: 0, 1: 0}
+        mean_meta_shaping_term = {0: 0, 1: 0}  # post-scale λ·(·), to compare against scaled extrinsic
         if env.mode != 0:
             for a in [0, 1]:
                 mean_price_scalar[a] = np.mean(actions_price[a]) if len(actions_price[a]) > 0 else 0
                 mean_effective_price_scalar[a] = np.mean(actions_effective_price[a]) if len(actions_effective_price[a]) > 0 else 0
+                mean_meta_shaping_term[a] = np.mean(meta_shaping_term[a]) if len(meta_shaping_term[a]) > 0 else 0
 
         # Calculate concentration statistics per agent (mode-specific)
         if env.mode == 0:
@@ -1130,6 +1204,8 @@ if not args.test:
             log_dict["agent1/mean_price_scalar"] = mean_price_scalar[1]
             log_dict["agent0/mean_effective_price_scalar"] = mean_effective_price_scalar[0]
             log_dict["agent1/mean_effective_price_scalar"] = mean_effective_price_scalar[1]
+            log_dict["agent0/meta_shaping_term"] = mean_meta_shaping_term[0]
+            log_dict["agent1/meta_shaping_term"] = mean_meta_shaping_term[1]
         
         # Add concentration metrics (mode-specific)
         if env.mode == 0:
