@@ -254,7 +254,7 @@ All runs: `num_days=7`, `brand_momentum_gamma=5`, `meta_policy=one` (agent 0 has
 
 **W&B layout:** all runs share `group=compensation_fix`; `job_type` = the `(mode, λ)` variant (e.g. `soft_l0.1`); seed/mode/λ are in `config` (via `config=args`). Grouping by `job_type` then auto-aggregates the 3 seeds into mean±std bands. The existing `sanity_normfix_d7_g5_meta_one_unbound` run (seed 10) can stand in for one multiplier run if a re-run is unnecessary.
 
-Generate via LSF job arrays / a parameterized launcher rather than hand-written scripts (see plan Task 8).
+Generated as individual `run_<name>.sh` scripts in `batch_jobs/compensation_fix/` per the project's `batch-jobs` convention (see plan Task 8).
 
 ---
 

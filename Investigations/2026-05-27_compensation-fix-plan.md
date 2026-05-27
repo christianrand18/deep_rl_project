@@ -143,7 +143,7 @@ Add three structurally different ways for the meta-policy to express price inten
 **Scope:** S
 
 #### Task 8: batch scripts — 12 runs (3 seeds × 4 configs); λ sweep conditional
-**Description:** Generate the screening matrix via the `batch-jobs` skill conventions, preferring LSF **job arrays / a parameterized launcher** over hand-written files. Common flags: `num_days=7`, `brand_momentum_gamma=5`, `meta_policy=one`, 25k episodes, `wandb_group=compensation_fix`, **unbounded** (no `--low_level_scalar_*`). Round-1 matrix (seeds `{10,20,30}`, λ=0.1 for soft/goal):
+**Description:** Generate the screening matrix following the `batch-jobs` skill conventions — **one `run_<name>.sh` per run** plus a group `README.md` (the project's established pattern; no job arrays). Common flags: `num_days=7`, `brand_momentum_gamma=5`, `meta_policy=one`, 25k episodes, `wandb_group=compensation_fix`, **unbounded** (no `--low_level_scalar_*`). Round-1 matrix (seeds `{10,20,30}`, λ=0.1 for soft/goal):
 
 | Config | Seeds | λ | Runs |
 |--------|-------|---|------|
@@ -162,7 +162,7 @@ The purpose is to **screen mechanisms and merge one winner**, so this is a selec
 - [ ] Dry parse: array expansion produces the 12 intended (mode, λ, seed) tuples.
 
 **Dependencies:** Tasks 2, 5, 6
-**Files:** `batch_jobs/...` (array script(s) / launcher)
+**Files:** `batch_jobs/compensation_fix/run_compfix_*.sh` (12) + `README.md`
 **Scope:** S
 
 #### Checkpoint: complete
