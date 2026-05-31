@@ -78,6 +78,11 @@ if args.meta_action_mode != "multiplier":
             f"--meta_action_mode {args.meta_action_mode} requires an active meta-policy "
             f"(--meta_policy one/both/heuristic)."
         )
+    if args.parallel_days:
+        raise ValueError(
+            f"--meta_action_mode {args.meta_action_mode} is not supported with --parallel_days "
+            f"(Picard solver has its own composition path and is always multiplier-mode)."
+        )
 
 # Set device
 args.cuda = args.cuda and torch.cuda.is_available()
@@ -302,6 +307,10 @@ elif args.meta_action_mode == "goal":
     meta_job_type = f"goal_l{args.meta_align_lambda}"
 else:
     meta_job_type = args.meta_action_mode  # multiplier / cap
+# v2: when meta-reward augmentation is on, append the tracking lambda so v2 runs are
+# distinguishable from v1 in W&B.
+if args.meta_track_lambda > 0 and args.meta_action_mode in ("soft", "goal"):
+    meta_job_type = f"{meta_job_type}_lm{args.meta_track_lambda}"
 
 # Set up weights and biases (only for training mode)
 if not args.test:
@@ -969,11 +978,20 @@ if not args.test:
                     }
                     picard_solver.record_day(i_day, env, accumulator, meta_reward)
                 else:
+                    # v2: track the per-meta-agent tracking penalty so we can both apply it to
+                    # the reward and log it. Stays 0 unless --meta_track_lambda > 0 in soft/goal.
+                    meta_track_penalty = {0: 0.0, 1: 0.0}
                     if meta_policies:
                         for _a in meta_policies:
-                            meta_policies[_a].store_reward(
-                                (accumulator.profit[_a] - accumulator.reb_cost[_a]) / args.reward_scalar
-                            )
+                            r = (accumulator.profit[_a] - accumulator.reb_cost[_a]) / args.reward_scalar
+                            if (args.meta_track_lambda > 0
+                                    and args.meta_action_mode in ("soft", "goal")
+                                    and len(day_price_raw[_a]) > 0):
+                                avg_factor = 2.0 * float(np.mean(day_price_raw[_a]))
+                                target = float(meta_multipliers[_a])
+                                meta_track_penalty[_a] = args.meta_track_lambda * (avg_factor - target) ** 2
+                                r -= meta_track_penalty[_a]
+                            meta_policies[_a].store_reward(r)
                     if accumulator is not None:
                         accumulator.momentum_snapshot = dict(env.brand_momentum)
                         meta_obs = {
@@ -1007,6 +1025,7 @@ if not args.test:
                                 day_log[f"day/agent{_a}_meta_multiplier"] = float(meta_multipliers[_a])
                                 if len(day_price_raw[_a]) > 0:
                                     day_log[f"day/agent{_a}_avg_price_raw"] = float(np.mean(day_price_raw[_a]))
+                                day_log[f"day/agent{_a}_meta_track_penalty"] = float(meta_track_penalty[_a])
                             wandb.log(day_log)
 
             # ── end of for i_day ────────────────────────────────────────────

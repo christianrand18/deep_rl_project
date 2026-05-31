@@ -368,6 +368,10 @@ class A2CArgumentBuilder:
 			help="Weight on the soft-mode penalty (2*mean(rho)-alpha)^2, in post-scaling units (default: 0.1).")
 		parser.add_argument("--meta_align_lambda", type=float, default=0.1,
 			help="Weight on the goal-mode intrinsic alignment reward max(0, 1-|2*mean(rho)-beta|), in post-scaling units (default: 0.1).")
+		parser.add_argument("--meta_track_lambda", type=float, default=0.0,
+			help="v2: Weight on the meta-policy's per-day tracking-error penalty (avg_factor - target)^2, in post-scaling units. "
+			     "Closes the loop so the meta is penalized for proposing targets the low-level won't deliver. "
+			     "Default 0.0 = disabled (v1 behavior). Active only with --meta_action_mode in {soft, goal}.")
 		parser.add_argument("--reb_solver", type=str, default="ortools",
 			choices=["ortools", "pulp"],
 			help="Rebalancing LP backend: ortools (fast min-cost-flow, default) or pulp (legacy CPLEX).")

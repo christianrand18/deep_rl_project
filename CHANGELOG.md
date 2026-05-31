@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-05-29
+
+- Add `--meta_track_lambda` (v2 of the compensation fix): penalize the meta-policy's per-day reward by `λ_meta·(2·mean(ρ) − β)²` so it learns to set achievable targets instead of saturating at the action-space bound. Closes the loop without needing off-policy correction (HIRO-style relabeling is incompatible with our PPO meta). Default `0.0` reproduces v1 exactly. Active only with `--meta_action_mode in {soft, goal}`. Also added a guard against combining the new modes with `--parallel_days` (Picard always operates in multiplier mode). See `Investigations/2026-05-29_goal-v2-spec.md`.
+
 ## 2026-05-27
 
 - Add `--meta_action_mode {multiplier,cap,soft,goal}` to fix low-level compensation against the meta-policy. `multiplier` (default) is unchanged; `cap` is a ceiling-only constraint (`min(ρ,α)` when α<1); `soft`/`goal` drop the multiplier and reinterpret α as a target price *factor* (2ρ), shaping the low-level reward toward it (penalty / saturating intrinsic, in post-scaling units). soft/goal additionally condition both `GNNActor` and `GNNCritic` on the daily target via a zero-init `lin_alpha` layer (no-op when target is `None`, so old checkpoints load unchanged). Guarded to mode-2 origin pricing with an active meta-policy; env untouched. W&B `job_type` now encodes the (mode, λ) variant for seed aggregation. See `Investigations/2026-05-25_compensation-fix-spec.md`.
