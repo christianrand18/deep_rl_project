@@ -11,7 +11,7 @@
 #BSUB -R "rusage[mem=4GB]"
 
 ### Setting a runtime limit
-#BSUB -W 48:00
+#BSUB -W 72:00
 
 ### Email notification when job begins and ends
 #BSUB -B
@@ -41,4 +41,4 @@ python main_a2c_multi_agent.py \
     --brand_momentum_gamma 5 \
     --meta_policy heuristic --meta_heuristic schedule_undercut_exploit \
     --seed 20 \
-    --max_episodes 25000
+    --max_episodes 100000

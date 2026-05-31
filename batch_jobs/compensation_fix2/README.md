@@ -8,7 +8,7 @@ Round 2 resolves three questions in one batch:
 - **Upper bound (2 seeds):** the spec's hypothesized winning strategy — undercut early to build brand momentum, premium late to exploit it (`schedule_undercut_exploit`). Sets the ceiling a learned meta could aspire to.
 - **λ sweep (3 seeds each):** soft and goal at λ ∈ {0.3, 1.0} — does scaling λ up close the tracking gap, or is the failure structural?
 
-16 runs total. Common flags: `--mode 2 --num_days 7 --brand_momentum_gamma 5`, 25k episodes, unbounded.
+16 runs total. Common flags: `--mode 2 --num_days 7 --brand_momentum_gamma 5`, **100k episodes**, unbounded. Walltime: **72h**.
 
 | Config | Mode | Meta | λ | Seeds | Runs |
 |--------|------|------|---|-------|------|
