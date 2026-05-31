@@ -228,7 +228,6 @@ class PicardSolver:
             )
             return False
 
-        np.random.seed(0)
         S_old_copy = self._S_old
         self._S_pred = self._update_guess(S_old_copy, S_new, self._k, self._delta_history)
         self._S_old = list(self._S_pred)

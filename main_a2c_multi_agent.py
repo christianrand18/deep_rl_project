@@ -1,6 +1,7 @@
 import copy
 import os
 import pickle
+import random
 
 import numpy as np
 import torch
@@ -49,6 +50,12 @@ wage = {'san_francisco': 17.76, 'nyc_man_south': 22.77, 'washington_dc': 25.26}
 test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'washington_dc':3}
 
 args = A2CArgumentBuilder.parse_multi_agent_args()
+
+# Global seed: covers torch weight init, numpy, and python random.
+# Picard day-level seeds are derived from args.seed via episode_seed_base.
+torch.manual_seed(args.seed)
+np.random.seed(args.seed)
+random.seed(args.seed)
 
 # Automatically enable od_price_observe when od_price_actions is True
 if args.od_price_actions and not args.od_price_observe:
@@ -430,7 +437,8 @@ if not args.test:
                      max_iters=args.picard_max_iters, tol=args.picard_tol,
                      update_strategy=args.picard_update_strategy,
                      omega=args.picard_omega,
-                     anderson_m=args.picard_anderson_m)
+                     anderson_m=args.picard_anderson_m,
+                     episode_seed_base=args.seed * 1000)
         if args.parallel_days else None
     )
 
