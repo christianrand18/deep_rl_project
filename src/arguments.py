@@ -377,6 +377,31 @@ class A2CArgumentBuilder:
 		parser.add_argument("--picard_omega", type=float, default=1.0,
 			help="Damping factor for Picard update. "
 			     "BM_new = (1-ω)·BM_old + ω·BM_proposed. 1.0=no damping, 0.5=half-step. (default: 1.0)")
+		# ── Experiment controls ───────────────────────────────────────────────
+		parser.add_argument(
+			"--seed_days",
+			action="store_true",
+			default=False,
+			help="Seed np.random, torch, and env._shuffle_rng at the start of each day "
+			     "(same scheme as Picard). Isolates the CRN variance-reduction effect from "
+			     "Picard's fixed-point consistency. Only active on the sequential path.",
+		)
+		parser.add_argument(
+			"--picard_no_warmstart",
+			action="store_true",
+			default=False,
+			help="Disable Picard warm-start (always zero-init S_pred). Breaks trajectory "
+			     "continuity while keeping everything else identical. Ablation only.",
+		)
+		parser.add_argument(
+			"--lagged_meta_obs",
+			action="store_true",
+			default=False,
+			help="Use previous episode's daily_state as meta-policy obs (mirrors Picard K=1 "
+			     "warm-start). Isolates the lagged-obs effect from RNG seeding. Sequential only.",
+		)
+		parser.add_argument("--print_interval", type=int, default=100,
+			help="Print a console summary every N training episodes (default: 100).")
 		return parser
 
 	@classmethod

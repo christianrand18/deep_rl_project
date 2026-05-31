@@ -438,9 +438,17 @@ if not args.test:
                      update_strategy=args.picard_update_strategy,
                      omega=args.picard_omega,
                      anderson_m=args.picard_anderson_m,
-                     episode_seed_base=args.seed * 1000)
+                     episode_seed_base=args.seed * 1000,
+                     warmstart=not args.picard_no_warmstart)
         if args.parallel_days else None
     )
+
+    # Lagged meta obs: store previous episode's daily_state per day for sequential.
+    # On episode 0 defaults to zeros, matching Picard's warm-start first episode.
+    _prev_ep_meta_obs = {d: {a: np.zeros(7, dtype=np.float32) for a in [0, 1]}
+                         for d in range(args.num_days)}
+    _cur_ep_meta_obs  = {d: {a: np.zeros(7, dtype=np.float32) for a in [0, 1]}
+                         for d in range(args.num_days)}
 
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
@@ -461,6 +469,12 @@ if not args.test:
 
         if args.parallel_days:
             picard_solver.begin_episode(i_episode, env)
+
+        # Sequential per-day seeding (mirrors Picard's prepare_day seeding).
+        # Gate on seed_days flag so we can A/B this effect independently.
+        if args.seed_days and not args.parallel_days:
+            _seed_rng = np.random.RandomState(args.seed * 1000 + i_episode)
+            _day_seeds_seq = _seed_rng.randint(0, 2**31 - 1, size=args.num_days)
 
         rerun = True
         while rerun:
@@ -527,13 +541,27 @@ if not args.test:
                 # Reset daily accumulator (used for both meta-policy state and per-day WandB logs)
                 if accumulator is not None:
                     accumulator.reset(env)
+                # Sequential per-day seeding: same RNG reset Picard does in prepare_day.
+                if args.seed_days and not args.parallel_days:
+                    _s = int(_day_seeds_seq[i_day])
+                    np.random.seed(_s)
+                    torch.manual_seed(_s)
+                    env._shuffle_rng = random.Random(_s)
                 # Meta-policy: select daily multipliers
                 if args.parallel_days:
                     # Picard: inject brand_momentum, seed RNGs, return deterministic alpha.
                     meta_multipliers = picard_solver.prepare_day(i_day, env)
                 elif meta_policies:
+                    # Lagged obs: use previous episode's daily_state (mirrors Picard K=1).
+                    # Current obs is still recorded below for use on the next episode.
+                    obs_for_meta = (_prev_ep_meta_obs[i_day] if args.lagged_meta_obs
+                                    else {a: meta_obs[a] for a in [0, 1]})
                     for _a in meta_policies:
-                        meta_multipliers[_a] = meta_policies[_a].select_action(meta_obs[_a])
+                        meta_multipliers[_a] = meta_policies[_a].select_action(obs_for_meta[_a])
+                    # Snapshot current obs so end-of-episode can persist it for next episode.
+                    if args.lagged_meta_obs:
+                        for _a in [0, 1]:
+                            _cur_ep_meta_obs[i_day][_a] = meta_obs[_a].copy()
     
                 while not done:
                     # Capture prices about to be submitted (for accumulator tracking)
@@ -971,6 +999,12 @@ if not args.test:
                     "episode": i_episode + 1,
                 })
 
+        # Roll lagged meta obs forward for sequential path.
+        if args.lagged_meta_obs and not args.parallel_days:
+            for d in range(args.num_days):
+                for a in [0, 1]:
+                    _prev_ep_meta_obs[d][a] = _cur_ep_meta_obs[d][a].copy()
+
         # Update both agent models after episode and collect training metrics
         grad_norms = {}
         if args.mode not in [3, 4]:
@@ -1214,6 +1248,18 @@ if not args.test:
             log_dict["agent1/brand_momentum"] = env.brand_momentum[1]
 
         wandb.log(log_dict)
+
+        if i_episode % args.print_interval == 0:
+            _rej = episode_rejected_demand / episode_total_demand if episode_total_demand > 0 else 0
+            _profit = episode_true_profit[0] + episode_true_profit[1]
+            _mcl = meta_metrics.get(0, {}).get('meta_critic_loss', float('nan'))
+            _ep = mean_effective_price_scalar[0] if env.mode != 0 else float('nan')
+            _mode = 'picard' if args.parallel_days else ('seeded' if args.seed_days else 'sequential')
+            print(
+                f"[{_mode}][ep {i_episode:6d}] "
+                f"profit={_profit:9.0f}  rej={_rej:.3f}  "
+                f"meta_crit={_mcl:.4f}  a0_eff_price={_ep:.3f}"
+            )
 
         # Keep metrics for both agents
         epoch_reward_list.append(episode_reward)  # This is already a dict {0: reward0, 1: reward1}

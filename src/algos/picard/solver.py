@@ -108,7 +108,8 @@ class PicardSolver:
                  episode_seed_base: int = 12345,
                  update_strategy: str = 'analytic',
                  omega: float = 1.0,
-                 anderson_m: int = 5):
+                 anderson_m: int = 5,
+                 warmstart: bool = True):
         self.env = env
         self.meta_policies = meta_policies or {}
         self.model_agents = model_agents
@@ -136,6 +137,7 @@ class PicardSolver:
         self._current_meta_out: dict = {}
         self._current_prev_state: Optional[DayState] = None
         self._last_result: Optional[EpisodeResult] = None
+        self._warmstart = warmstart
         self._prev_S: Optional[list] = None
         self._anderson_history: list = []   # list of (x_flat, Gx_flat) per iteration
 
@@ -259,8 +261,11 @@ class PicardSolver:
     # ── strategies (override to experiment) ───────────────────────────────────
 
     def _pick_initial_guess(self, episode_idx: int) -> list:
-        """Warm-start from previous episode's converged state, or zero-init if none."""
-        if self._prev_S is not None:
+        """Warm-start from previous episode's converged state, or zero-init if none.
+
+        Warm-start can be disabled with warmstart=False (for ablations).
+        """
+        if self._warmstart and self._prev_S is not None:
             return list(self._prev_S)
         return [self._zero_state() for _ in range(self.num_days + 1)]
 

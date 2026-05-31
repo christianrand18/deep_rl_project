@@ -12,3 +12,16 @@ Tests whether Picard fixed-point iteration produces better learning than sequent
 | `run_picard_7day_bmg1_anderson_tol5e3.sh` | Same as above but tol=5e-3 — tests whether looser tolerance (above noise floor) gives K=1 more often |
 
 All runs: `nyc_man_south`, mode 2, `meta_policy one`. Picard runs use `tol=1e-3`, `max_iters=10`.
+
+## Debug ablations (`wandb_group: picard_debug`, 200k episodes each)
+
+Isolate why Picard outperforms sequential. Three candidate mechanisms:
+per-day RNG seeding, lagged obs, trajectory continuity via warm-start.
+
+| Script | Variable isolated | Expected result if this is the cause |
+|---|---|---|
+| `debug_baseline_7day.sh` | — reference | — |
+| `debug_picard_7day.sh` | — full Picard | — |
+| `debug_seed_days_7day.sh` | per-day RNG seeding only | matches Picard if seeding drives the gap |
+| `debug_lagged_7day.sh` | previous-episode obs only | matches Picard if obs lag drives the gap |
+| `debug_picard_no_warmstart_7day.sh` | Picard minus warm-start | matches baseline if trajectory continuity drives the gap |
