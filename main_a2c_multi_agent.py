@@ -422,6 +422,8 @@ if not args.test:
                 clip_eps=args.meta_clip_eps,
                 n_ppo_epochs=args.meta_ppo_epochs,
                 device=device,
+                clamped_buffer=args.clamped_meta_buffer,
+                zero_obs=args.meta_zero_obs,
             )
     # Accumulator runs whenever multi-day or meta is active — enables per-day WandB logging
     # for drift detection in no-meta multi-day runs.
@@ -1254,7 +1256,11 @@ if not args.test:
             _profit = episode_true_profit[0] + episode_true_profit[1]
             _mcl = meta_metrics.get(0, {}).get('meta_critic_loss', float('nan'))
             _ep = mean_effective_price_scalar[0] if env.mode != 0 else float('nan')
-            _mode = 'picard' if args.parallel_days else ('seeded' if args.seed_days else 'sequential')
+            _mode = ('picard' if args.parallel_days else
+                     'clamped_buf' if args.clamped_meta_buffer else
+                     'seeded' if args.seed_days else
+                     'lagged' if args.lagged_meta_obs else
+                     'sequential')
             print(
                 f"[{_mode}][ep {i_episode:6d}] "
                 f"profit={_profit:9.0f}  rej={_rej:.3f}  "

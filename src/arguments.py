@@ -379,6 +379,15 @@ class A2CArgumentBuilder:
 			     "BM_new = (1-ω)·BM_old + ω·BM_proposed. 1.0=no damping, 0.5=half-step. (default: 1.0)")
 		# ── Experiment controls ───────────────────────────────────────────────
 		parser.add_argument(
+			"--clamped_meta_buffer",
+			action="store_true",
+			default=False,
+			help="Store clamped action + clamped logp in the meta-policy PPO buffer "
+			     "(mirrors Picard's _meta_forward). Default stores raw sample + raw logp. "
+			     "Sequential path only — Picard always uses clamped. Ablation to test "
+			     "whether clamp/logp inconsistency explains Picard's lower critic loss.",
+		)
+		parser.add_argument(
 			"--seed_days",
 			action="store_true",
 			default=False,
@@ -392,6 +401,16 @@ class A2CArgumentBuilder:
 			default=False,
 			help="Disable Picard warm-start (always zero-init S_pred). Breaks trajectory "
 			     "continuity while keeping everything else identical. Ablation only.",
+		)
+		parser.add_argument(
+			"--meta_zero_obs",
+			action="store_true",
+			default=False,
+			help="Blind the meta-policy: feed a constant zero observation at every forward "
+			     "(both sequential and Picard). With constant obs the critic can only predict "
+			     "the mean return, so critic_loss = pure return variance. Isolates whether the "
+			     "Picard/sequential critic-loss gap comes from the obs representation or the "
+			     "returns themselves.",
 		)
 		parser.add_argument(
 			"--lagged_meta_obs",

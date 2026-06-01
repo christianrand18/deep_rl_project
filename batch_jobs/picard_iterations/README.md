@@ -25,3 +25,21 @@ per-day RNG seeding, lagged obs, trajectory continuity via warm-start.
 | `debug_seed_days_7day.sh` | per-day RNG seeding only | matches Picard if seeding drives the gap |
 | `debug_lagged_7day.sh` | previous-episode obs only | matches Picard if obs lag drives the gap |
 | `debug_picard_no_warmstart_7day.sh` | Picard minus warm-start | matches baseline if trajectory continuity drives the gap |
+
+**Findings so far:** ruled out — seeding, lagged obs, warm-start, update strategy
+(jacobi=anderson), clamped buffer, and brand momentum (gap persists at gamma=0).
+The gap is intrinsic to the meta-policy transition pipeline. Last candidate: the
+observation representation (Picard's smoothed `S_pred` vs sequential's live `daily_state`).
+
+### zero-obs isolation (gamma=0, meta-policy blinded)
+
+Feed the meta-policy a constant zero observation in both paths. With constant obs the
+critic can only predict the mean, so `meta_critic_loss` = pure return variance.
+
+| Script | Result interpretation |
+|---|---|
+| `debug_seq_zeroobs_g0_7day.sh` | sequential, blinded |
+| `debug_picard_zeroobs_g0_7day.sh` | Picard, blinded |
+
+Gap vanishes → cause was the obs representation. Gap persists → Picard's returns are
+intrinsically lower-variance (look at action/reward generation next).

@@ -16,12 +16,14 @@ class MetaPolicy(nn.Module):
     """
 
     def __init__(self, obs_dim, hidden_dim=128, lr=3e-4, gamma=0.99,
-                 clip_eps=0.2, n_ppo_epochs=4, device='cpu'):
+                 clip_eps=0.2, n_ppo_epochs=4, device='cpu',
+                 clamped_buffer=False, zero_obs=False):
         super().__init__()
         self.gamma = gamma
         self.clip_eps = clip_eps
         self.n_ppo_epochs = n_ppo_epochs
         self.device = device
+        self.zero_obs = zero_obs
 
         self.trunk = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim), nn.ReLU(),
@@ -33,6 +35,7 @@ class MetaPolicy(nn.Module):
         self.log_std = nn.Parameter(torch.tensor([-0.6931]))  # std ≈ 0.5 initially
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        self.clamped_buffer = clamped_buffer
 
         self.obs_buf = []
         self.act_buf = []
@@ -43,6 +46,11 @@ class MetaPolicy(nn.Module):
         self.to(device)
 
     def _forward(self, obs_t):
+        # Ablation: blind the meta-policy by feeding a constant zero observation.
+        # Applied at every forward (action selection, PPO recompute, and the Picard
+        # solver's mp._forward call), so all paths stay consistent.
+        if self.zero_obs:
+            obs_t = torch.zeros_like(obs_t)
         x = self.trunk(obs_t)
         mean = 2.0 * torch.sigmoid(self.actor_head(x))
         std = self.log_std.exp().clamp(1e-4, 1.0)
@@ -50,16 +58,28 @@ class MetaPolicy(nn.Module):
         return mean, std, value
 
     def select_action(self, obs: np.ndarray) -> float:
-        """Returns a single global price multiplier in [0, 2] and stores transition."""
+        """Returns a single global price multiplier in [0, 2] and stores transition.
+
+        clamped_buffer=True mirrors what Picard's _meta_forward does: stores the
+        clamped action and evaluates logp at the clamped value. The default (False)
+        stores the raw sample and evaluates logp there (the mathematically correct
+        importance weight for PPO).
+        """
         obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
         with torch.no_grad():
             mean, std, value = self._forward(obs_t)
         dist = torch.distributions.Normal(mean, std)
         raw_action = dist.sample()
-        logp = dist.log_prob(raw_action).sum(-1)
+
+        if self.clamped_buffer:
+            stored_action = raw_action.clamp(0.0, 2.0)
+            logp = dist.log_prob(stored_action).sum(-1)
+        else:
+            stored_action = raw_action
+            logp = dist.log_prob(raw_action).sum(-1)
 
         self.obs_buf.append(obs_t)
-        self.act_buf.append(raw_action)
+        self.act_buf.append(stored_action)
         self.logp_buf.append(logp)
         self.val_buf.append(value)
 
