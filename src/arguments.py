@@ -421,6 +421,9 @@ class A2CArgumentBuilder:
 		)
 		parser.add_argument("--print_interval", type=int, default=100,
 			help="Print a console summary every N training episodes (default: 100).")
+		parser.add_argument("--dump_meta_path", type=str, default=None,
+			help="If set, append committed meta-policy (obs, action, value, return) tuples "
+			     "to this jsonl file each episode. Diagnostic for the obs->return structure.")
 		parser.add_argument("--final_stochastic_eval", type=int, default=0,
 			help="After training, freeze the meta + low-level policies and run N plain "
 			     "stochastic multi-day episodes (no Picard, no denoising, deterministic "

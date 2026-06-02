@@ -424,6 +424,7 @@ if not args.test:
                 device=device,
                 clamped_buffer=args.clamped_meta_buffer,
                 zero_obs=args.meta_zero_obs,
+                dump_path=args.dump_meta_path,
             )
     # Accumulator runs whenever multi-day or meta is active — enables per-day WandB logging
     # for drift detection in no-meta multi-day runs.

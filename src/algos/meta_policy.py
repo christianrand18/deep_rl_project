@@ -17,13 +17,15 @@ class MetaPolicy(nn.Module):
 
     def __init__(self, obs_dim, hidden_dim=128, lr=3e-4, gamma=0.99,
                  clip_eps=0.2, n_ppo_epochs=4, device='cpu',
-                 clamped_buffer=False, zero_obs=False):
+                 clamped_buffer=False, zero_obs=False, dump_path=None):
         super().__init__()
         self.gamma = gamma
         self.clip_eps = clip_eps
         self.n_ppo_epochs = n_ppo_epochs
         self.device = device
         self.zero_obs = zero_obs
+        self.dump_path = dump_path  # if set, append committed (obs,act,value,return) per episode
+        self._dump_ep = 0
 
         self.trunk = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim), nn.ReLU(),
@@ -126,6 +128,21 @@ class MetaPolicy(nn.Module):
         acts_t = torch.cat(self.act_buf, 0)
         old_logps_t = torch.stack(self.logp_buf).detach()
         old_vals_t = torch.cat(self.val_buf, 0).detach()
+
+        # Diagnostic: dump the exact committed (obs, action, pre-update value, return)
+        # tuples — identical hook for Picard (append_transition) and sequential paths.
+        if self.dump_path is not None:
+            import json
+            o = obs_t.detach().cpu().numpy()
+            a = acts_t.detach().cpu().numpy().reshape(len(o), -1)[:, 0]
+            v = old_vals_t.detach().cpu().numpy().reshape(-1)
+            r = returns_t.detach().cpu().numpy().reshape(-1)
+            with open(self.dump_path, "a") as f:
+                for i in range(len(o)):
+                    f.write(json.dumps({"ep": self._dump_ep, "day": i,
+                                        "obs": o[i].tolist(), "act": float(a[i]),
+                                        "value": float(v[i]), "ret": float(r[i])}) + "\n")
+            self._dump_ep += 1
 
         advantages = returns_t - old_vals_t
         adv_mean = advantages.mean().item()
