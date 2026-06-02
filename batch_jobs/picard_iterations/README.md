@@ -43,3 +43,24 @@ critic can only predict the mean, so `meta_critic_loss` = pure return variance.
 
 Gap vanishes → cause was the obs representation. Gap persists → Picard's returns are
 intrinsically lower-variance (look at action/reward generation next).
+
+**Result:** gap *reversed* when blinded (Picard higher). Picard's low training-time
+critic loss is an artifact: it trains the meta-policy on the converged/denoised
+trajectory, so `(obs, return)` pairs are near-stationary and the critic fits them
+almost perfectly. It is a *different* training scheme, not a faithful fast sequential.
+
+### Deployment fairness eval (`wandb_group: picard_eval`)
+
+Settles whether Picard's denoised training actually yields a better deployed policy.
+Both train to the same episode budget, then run 100 plain stochastic days
+(deterministic actions, natural BM, shared eval seeds → paired comparison). Compare
+`eval/stochastic_true_profit_mean`.
+
+| Script | Trains meta-policy via |
+|---|---|
+| `eval_seqtrained_7day.sh` | sequential (honest stochastic) |
+| `eval_picardtrained_7day.sh` | Picard (fast, denoised) |
+
+Picard eval ≥ sequential → legitimate fast scheme, use it. Picard eval < sequential
+→ training gains were a denoising artifact that doesn't transfer; keep Picard only as
+a fast pre-trainer.

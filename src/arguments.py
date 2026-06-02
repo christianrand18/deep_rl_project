@@ -421,6 +421,11 @@ class A2CArgumentBuilder:
 		)
 		parser.add_argument("--print_interval", type=int, default=100,
 			help="Print a console summary every N training episodes (default: 100).")
+		parser.add_argument("--final_stochastic_eval", type=int, default=0,
+			help="After training, freeze the meta + low-level policies and run N plain "
+			     "stochastic multi-day episodes (no Picard, no denoising, deterministic "
+			     "actions, paired eval seeds). The fair apples-to-apples measure of deployed "
+			     "meta-policy quality. 0 = off (default). Mode 2 only.")
 		return parser
 
 	@classmethod

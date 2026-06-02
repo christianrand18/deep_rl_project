@@ -1324,6 +1324,70 @@ if not args.test:
                         model_agents[1].save_checkpoint(
                             path=f"ckpt/{args.checkpoint_path}_agent2_test.pth")
 
+    # ── Final stochastic evaluation (Picard-vs-sequential fairness check) ──
+    # Freeze the trained policies and run plain stochastic multi-day episodes:
+    # no Picard, no denoising, deterministic meta + low-level actions, brand
+    # momentum evolving naturally. Eval seeds are fixed (independent of the
+    # training seed) so two differently-trained policies see identical demand
+    # realizations — a paired comparison. This is the only apples-to-apples
+    # measure of deployed meta-policy quality.
+    if args.final_stochastic_eval > 0 and env.mode == 2 and meta_policies and accumulator is not None:
+        for a in [0, 1]:
+            model_agents[a].eval()
+        ep_true_list, ep_net_list = [], []
+        EVAL_SEED_BASE = 7_000_000  # shared across runs → identical eval environments
+        for e in range(args.final_stochastic_eval):
+            s = EVAL_SEED_BASE + e
+            np.random.seed(s); torch.manual_seed(s); env._shuffle_rng = random.Random(s)
+            env.reset()
+            meta_obs_eval = {a: np.zeros(7, dtype=np.float32) for a in [0, 1]}
+            ep_true = ep_net = 0.0
+            for i_day in range(args.num_days):
+                if i_day > 0:
+                    env.reset_day()
+                accumulator.reset(env)
+                mult = {a: (meta_policies[a].act_mean(meta_obs_eval[a]) if a in meta_policies else 1.0)
+                        for a in [0, 1]}
+                action_rl = {a: [0.0] * env.nregion for a in [0, 1]}
+                done = False
+                step = 0
+                while not done:
+                    submitted_prices = ({a: np.array(action_rl[a])[:, 0] for a in [0, 1]}
+                                        if step > 0 else None)
+                    _, _, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                    action_rl = {}
+                    for a in [0, 1]:
+                        act = np.array(model_agents[a].select_action(env.obs[a], deterministic=True))
+                        act[:, 0] = np.clip(mult[a] * act[:, 0], 0.0, 2.0)  # apply meta multiplier
+                        action_rl[a] = act
+                    desiredAcc = {a: {env.region[i]: int(action_rl[a][i, -1] * dictsum(env.agent_acc[a], env.time + 1))
+                                      for i in range(env.nregion)} for a in [0, 1]}
+                    rebAction = {a: solveRebFlow(env, desiredAcc[a], a) for a in [0, 1]}
+                    _, _, done, info, system_info, _, _ = env.reb_step(rebAction)
+                    accumulator.update(info, system_info, submitted_prices)
+                    step += 1
+                env.update_brand_momentum(served_counts=accumulator.served, total_demand=accumulator.total_demand)
+                accumulator.momentum_snapshot = dict(env.brand_momentum)
+                meta_obs_eval = {a: accumulator.daily_state(a, i_day + 1, args.num_days, args.reward_scalar)
+                                 for a in [0, 1]}
+                ep_true += accumulator.profit[0] + accumulator.profit[1]
+                ep_net += (accumulator.profit[0] - accumulator.reb_cost[0]) \
+                          + (accumulator.profit[1] - accumulator.reb_cost[1])
+            ep_true_list.append(ep_true); ep_net_list.append(ep_net)
+        for a in [0, 1]:
+            model_agents[a].train()
+        ep_true_arr = np.array(ep_true_list); ep_net_arr = np.array(ep_net_list)
+        print(f"\n[FINAL STOCHASTIC EVAL] n={len(ep_true_arr)}  "
+              f"true_profit mean={ep_true_arr.mean():.0f} std={ep_true_arr.std():.0f}  "
+              f"net(meta-obj) mean={ep_net_arr.mean():.0f} std={ep_net_arr.std():.0f}")
+        wandb.log({
+            "eval/stochastic_true_profit_mean": float(ep_true_arr.mean()),
+            "eval/stochastic_true_profit_std": float(ep_true_arr.std()),
+            "eval/stochastic_net_return_mean": float(ep_net_arr.mean()),
+            "eval/stochastic_net_return_std": float(ep_net_arr.std()),
+            "eval/n_episodes": len(ep_true_arr),
+        })
+
     # Log checkpoint to wandb
     wandb.save(f"ckpt/{args.checkpoint_path}_sample.pth")
 

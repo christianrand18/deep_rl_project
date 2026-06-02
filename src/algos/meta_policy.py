@@ -85,6 +85,13 @@ class MetaPolicy(nn.Module):
 
         return float(raw_action.clamp(0.0, 2.0).squeeze().item())
 
+    def act_mean(self, obs: np.ndarray) -> float:
+        """Deterministic deployment action: the policy mean (no exploration noise)."""
+        obs_t = torch.FloatTensor(obs).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            mean, _, _ = self._forward(obs_t)
+        return float(mean.clamp(0.0, 2.0).squeeze().item())
+
     def store_reward(self, reward: float):
         self.rew_buf.append(float(reward))
 
