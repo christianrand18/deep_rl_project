@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-04
+
+- Add conditioning-only ablation batch scripts (`batch_jobs/compensation_fix_cond/`): soft mode with λ_reg=0, λ_track=0 — tests whether `lin_alpha` conditioning alone (without any reward shaping) is sufficient for the meta to communicate strategic intent. Round 3 established that the shaping terms create a bad equilibrium (ρ locked at ~1, meta pushed toward α=2); this round isolates the conditioning pathway. Decision criteria: agent0 profit ≥ nometa baseline (~80k) = pass; ≈27k = lin_alpha ineffective.
+
 ## 2026-05-29
 
 - Add `--meta_track_lambda` (v2 of the compensation fix): penalize the meta-policy's per-day reward by `λ_meta·(2·mean(ρ) − β)²` so it learns to set achievable targets instead of saturating at the action-space bound. Closes the loop without needing off-policy correction (HIRO-style relabeling is incompatible with our PPO meta). Default `0.0` reproduces v1 exactly. Active only with `--meta_action_mode in {soft, goal}`. Also added a guard against combining the new modes with `--parallel_days` (Picard always operates in multiplier mode). See `Investigations/2026-05-29_goal-v2-spec.md`.
