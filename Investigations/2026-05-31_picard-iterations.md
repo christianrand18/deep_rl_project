@@ -1,0 +1,19 @@
+# Speeding up simulation using Picard iterations
+## Background
+With the meta-policy simulation task we are simulating T timesteps, for N days over E episodes for K agents. For a fully sequential order of computation this yields a timecomplexity of $O(T\times N \times E \times K)$ and scaling any of the multipliers thus yields a linear increase in wall clock time. While simulating 1 day with 20 timesteps for 100,000 episodes within 24-hours was acceptable, scaling to multiple days yields an impractical if not infeasible wall clock time. 
+
+While parallel computing is an option the simulation is not trivially calculated in parallel due to the inherent sequential nature of the simulation tractories. This leads to being restricted to single-threaded computing with underutilized computational resources and high wall clock times.
+
+To overcome this constraint we introduce parallel-in-days episode rollouts utilizing Picard iterations.
+
+## Previous work
+In [1] the authors presents an iterative approach to policy simulation in supply chain RL dubbed Picard iteration, named after the proof of the Picard-Lindelöf theorem. While the paper explicitly deals with supply chain management problems they state and emperically prove the approach is applicable to other RL domains. Their approach uses the assumption that the policy evaluation is computationally expensive while the system dynamics evaluation is cheap. Under this assumption the Picard iteration divides up the simulation of T time-steps across parallel processes and initialize a 'cache' of actions, one for each time-step, that can be thought of as an initial guess of the actions that will eventually be simulated. Each process then runs a individual simulation but only evaluates the policy for timesteps specifically assigned to that process; for the remainder, the cache actions are used. At the end of an iteration, each process updates the cache in the time-steps it was responsible for. As such, a single iteration is faster than the serial policy simulation task by a factor of roughly #processes [1], and by running multiple iterations the action rollout of the trajectory converges to the actions of the sequential rollout. The paper establishes that the approach achieves non-trivial speedup in wall clock time over sequential computation, emperically demonstrated by a convergence to ≤0.1% in relative RMSE in all Gym MuJoCo environments for a PPO algorithm within 15 iterations for T=200.
+
+## Our approach
+Drawing inspiration from the approach in [1] we implement a similar scheme, albeit with moderations. A fundamental assumption in [1] was cheap evaluation of the systems dynamics and in our case the environment envaluation is not cheap per-se considering the LP optimization and choice model evaluation. However, with the meta-policy being of simple architecture we have a reversed case with the meta-policy evaluation being computationally cheap and system dynamics being the expensive part. To enable parallel day evaluation we utilize the fact that the information bottleneck between days is thin and given a prediction of the previous days meta-state we are perfectly able to simulate a disconnected given day.
+
+### Formulation
+We consider a hierarchical environment setup with state space $\mathcal{S}=\mathcal{S}_\text{meta} \times \mathcal{S}_\text{lower}$ where $\text{dim}(\mathcal{S}_\text{meta}) \ne \text{dim}(\mathcal{S}_\text{lower})$. The simulation horizon spans 
+
+## References
+[1] Farias, V., Gijsbrechts, J., Khojandi, A., Peng, T., Zheng, A. (2025). Speeding up Policy Simulation in Supply Chain RL. arXiv:2406.01939v2.
