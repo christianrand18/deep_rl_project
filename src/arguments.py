@@ -352,6 +352,19 @@ class A2CArgumentBuilder:
 			help="PPO clip epsilon for meta-policy (default: 0.2).")
 		parser.add_argument("--meta_ppo_epochs", type=int, default=4,
 			help="Number of PPO epochs per meta-policy update (default: 4).")
+		parser.add_argument(
+			"--meta_action_mode",
+			type=str,
+			default="multiplier",
+			choices=["multiplier", "soft"],
+			help="How the meta action composes with the low-level price scalar. "
+			     "'multiplier' (default): effective = clamp(alpha*rho, 0, 2). "
+			     "'soft': alpha is a target price factor (2*rho), not a multiplier; "
+			     "rho passes through unscaled and the low-level reward is shaped toward the target. "
+			     "soft requires --mode 2 origin pricing and --num_days > 1.",
+		)
+		parser.add_argument("--meta_reg_lambda", type=float, default=0.1,
+			help="Weight on the soft-mode penalty (2*mean(rho)-alpha)^2, in post-scaling units (default: 0.1).")
 		parser.add_argument("--reb_solver", type=str, default="ortools",
 			choices=["ortools", "pulp"],
 			help="Rebalancing LP backend: ortools (fast min-cost-flow, default) or pulp (legacy CPLEX).")
