@@ -378,12 +378,18 @@ def _worker(task):
 def _init_worker() -> None:
     """Per-worker init. Single thread so N workers don't oversubscribe."""
     torch.set_num_threads(1)
+    import os as _os
+    for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        _os.environ[_var] = "1"
 
 
 def set_worker_state(env, model_agents, args, meta_policies, solveRebFlow) -> None:
     """Populate the module-level worker state. MUST be called *before*
     ``make_pool`` so the fork inherits these references.
     """
+    import os as _os
+    for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        _os.environ[_var] = "1"
     global _WORKER_STATE
     _WORKER_STATE = {
         'env': env, 'model_agents': model_agents, 'args': args,
