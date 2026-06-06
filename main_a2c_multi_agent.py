@@ -94,11 +94,9 @@ if args.meta_action_mode != "multiplier":
             f"--meta_action_mode {args.meta_action_mode} requires an active meta-policy "
             f"(--meta_policy one/both/heuristic)."
         )
-    if args.parallel_days:
-        raise ValueError(
-            f"--meta_action_mode {args.meta_action_mode} is not supported with --parallel_days "
-            f"(Picard solver has its own composition path and is always multiplier-mode)."
-        )
+    # Note: soft / multiplier_soft now supported with --parallel_days.
+    # The day_runner handles composition regardless of whether days run
+    # sequentially or via the Picard parallel pool.
 
 # Set device
 args.cuda = args.cuda and torch.cuda.is_available()
