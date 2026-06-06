@@ -303,16 +303,16 @@ class AMoD:
                                 dist['wages'], 
                                 size=int(d_original), 
                                 p=dist['probabilities']
-                            )
+                            ).astype(np.float32, copy=False)
                         else:
                             # Fallback to uniform wage if region not in distribution
-                            passenger_wages = np.full(int(d_original), self.wage)
+                            passenger_wages = np.full(int(d_original), self.wage, dtype=np.float32)
                         
                         # Track sampled wages for system-wide average
                         self.system_wage_samples.extend(passenger_wages.tolist())
                         
                         # Vectorized income effect calculation: city_avg_wage / passenger_wage
-                        income_effects = self.city_avg_wage / passenger_wages
+                        income_effects = np.float32(self.city_avg_wage) / passenger_wages
                         
                         # Vectorized utility calculations for all passengers
                         U_0_batch = (
@@ -327,7 +327,7 @@ class AMoD:
                             - income_effects * self.choice_price_mult * pr1
                             + self.bm_gamma * self.brand_momentum[1]
                         )
-                        U_reject_batch = np.full(int(d_original), U_reject)
+                        U_reject_batch = np.full(int(d_original), U_reject, dtype=np.float32)
                         
                         # Vectorized probability calculation
                         exp_utilities_batch = np.column_stack([
@@ -353,7 +353,7 @@ class AMoD:
                         
                     else:
                         # Uniform wage path
-                        passenger_wages = np.full(int(d_original), self.wage)
+                        passenger_wages = np.full(int(d_original), self.wage, dtype=np.float32)
                         self.system_wage_samples.extend(passenger_wages.tolist())
 
                         # Compute utilities (same for all passengers under uniform wage)
@@ -361,11 +361,11 @@ class AMoD:
                         U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - self.choice_price_mult * pr1 + self.bm_gamma * self.brand_momentum[1]
                         U_reject_mean = U_reject
 
-                        exp_U_0 = np.exp(U_0)
-                        exp_U_1 = np.exp(U_1)
-                        exp_U_r = np.exp(U_reject)
+                        exp_U_0 = np.float32(np.exp(U_0))
+                        exp_U_1 = np.float32(np.exp(U_1))
+                        exp_U_r = np.float32(np.exp(U_reject))
                         total = exp_U_0 + exp_U_1 + exp_U_r
-                        Probabilities = np.array([exp_U_0 / total, exp_U_1 / total, exp_U_r / total])
+                        Probabilities = np.array([exp_U_0 / total, exp_U_1 / total, exp_U_r / total], dtype=np.float32)
 
                         d0, d1, dr = np.random.multinomial(int(d_original), Probabilities).tolist()
 
@@ -505,7 +505,7 @@ class AMoD:
     def reb_step(self, rebAction_agents):
         t = self.time
         rebreward = {0: 0, 1: 0}
-        self.ext_reward_agents = {a: np.zeros(self.nregion) for a in [0, 1]}
+        self.ext_reward_agents = {a: np.zeros(self.nregion, dtype=np.float32) for a in [0, 1]}
     
         for agent_id in [0, 1]:
             self.agent_info[agent_id]['rebalancing_cost'] = 0
