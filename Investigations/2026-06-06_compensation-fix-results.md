@@ -117,8 +117,6 @@ The improvement is modest and the mechanism is impure (the meta α is scattered,
 ## What Was Merged
 
 - `--meta_action_mode soft` with `--meta_reg_lambda` (default 0.1)
-- Zero-initialized `lin_alpha` conditioning in `GNNActor` and `GNNCritic` (no-op when `meta_target=None`, so old checkpoints load unchanged)
-- `set_meta_target()` on `A2C` agent
 - `day/agent{a}_avg_price_raw` W&B diagnostic metric
 - `agent{a}/meta_shaping_term` W&B metric
 - W&B `job_type` encoding mode+λ for seed aggregation
@@ -128,8 +126,8 @@ The improvement is modest and the mechanism is impure (the meta α is scattered,
 
 ## Open Questions
 
-1. **Why does the meta α not track in soft mode?** The shaping term (λ=0.1) is too weak — the meta's per-day reward is dominated by profit (O(10–100) post-scale) and the penalty for misalignment barely registers. The meta learns to ignore α and the low-level learns to ignore the conditioning.
+1. **Why does the meta α not track in soft mode?** The shaping term (λ=0.1) is too weak — the meta's per-day reward is dominated by profit (O(10–100) post-scale) and the penalty for misalignment barely registers. The meta learns to ignore α and the low-level has no visibility into α.
 
-2. **Would conditioning-only (round 4) work with more episodes?** Possibly. At 200k episodes the architecture hasn't learned to use `lin_alpha`. Could be worth revisiting with a longer run or curriculum (start conditioning only, then introduce soft shaping later).
+2. **Would conditioning-only (round 4) work with more episodes?** Possibly. At 200k episodes α still saturated. Could be worth revisiting with a longer run or curriculum (start with conditioning, then layer in shaping).
 
 3. **Is the multiplier architecture fundamentally wrong?** The nometa baseline at 81k suggests the low-level alone already optimizes well. The meta may need a different role — multi-day fleet pre-positioning or brand momentum strategy — rather than a pricing multiplier that the low-level can fight.

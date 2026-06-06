@@ -2,7 +2,7 @@
 
 ## 2026-06-06
 
-- Add `--meta_action_mode soft` as an alternative to the default `multiplier` mode. Soft mode reinterprets the meta's daily α as a target price factor (2ρ) rather than a multiplier; ρ passes through unscaled and the low-level reward is shaped toward the target via `-λ·(2·mean(ρ) − α)²`. Additionally conditions both `GNNActor` and `GNNCritic` on the daily target via a zero-init `lin_alpha` layer (no-op when `meta_target=None`, so old checkpoints load unchanged). Across 3 seeds at 200k episodes, soft λ=0.1 yields ~68k vs multiplier's ~63k while eliminating the ρ compensation dynamic. Guarded to mode-2 origin pricing with an active meta-policy. See `Investigations/2026-06-06_compensation-fix-results.md` for the full experimental record (cap, goal, softaug, and cond were also tested and rejected).
+- Add `--meta_action_mode soft` as an alternative to the default `multiplier` mode. Soft mode reinterprets the meta's daily α as a target price factor (2ρ) rather than a multiplier; ρ passes through unscaled and the low-level reward is shaped toward the target via `-λ·(2·mean(ρ) − α)²`. Across 3 seeds at 200k episodes, soft λ=0.1 yields ~68k vs multiplier's ~63k while eliminating the ρ compensation dynamic. Guarded to mode-2 origin pricing with an active meta-policy. See `Investigations/2026-06-06_compensation-fix-results.md` for the full experimental record (cap, goal, softaug, and cond were also tested and rejected).
 
 ## 2026-05-25
 
