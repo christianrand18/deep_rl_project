@@ -303,6 +303,8 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 # and the UI can aggregate seeds into mean/std bands with one group-by.
 if args.meta_action_mode == "soft":
     meta_job_type = f"soft_l{args.meta_reg_lambda}"
+elif args.meta_action_mode == "multiplier_soft":
+    meta_job_type = f"msoft_l{args.meta_reg_lambda}"
 else:
     meta_job_type = args.meta_action_mode  # multiplier
 
@@ -863,7 +865,10 @@ if not args.test:
                             # soft: shape the low-level reward toward the meta target price factor
                             # (2·mean(ρ)). Pre-multiply by reward_scale so that after
                             # training_step's /reward_scale the term lands at λ·(·) (post-scale units).
-                            if agent_id in meta_policies and args.meta_action_mode == "soft":
+                            if agent_id in meta_policies and args.meta_action_mode in ("soft", "multiplier_soft"):
+                                # soft: rho_factor is the raw pre-multiplier price factor (2·ρ)
+                                # multiplier_soft: rho_factor is the post-multiplier effective price factor (2·clip(α·ρ))
+                                # In both cases target = α; penalty lands in post-scale units after /reward_scale.
                                 rho_factor = 2.0 * float(np.mean(np.array(action_rl[agent_id])[:, 0]))
                                 target = meta_multipliers[agent_id]
                                 shaped = -args.meta_reg_lambda * (rho_factor - target) ** 2
