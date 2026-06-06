@@ -23,3 +23,4 @@ iteration (parallel days, 7 workers). Compare `soft` vs `multiplier_soft` at λ=
 | run_picard_soft_l0.1_s10 | soft | 0.1 | 7 | 7 | 8 | 10 |
 | run_picard_msoft_l0.1_s10 | multiplier_soft | 0.1 | 7 | 7 | 8 | 10 |
 | run_picard_soft_d28_l0.1_s10 | soft | 0.1 | 28 | 28 | 32 | 10 |
+| run_picard_msoft_d28_l0.1_s10 | multiplier_soft | 0.1 | 28 | 28 | 32 | 10 |
