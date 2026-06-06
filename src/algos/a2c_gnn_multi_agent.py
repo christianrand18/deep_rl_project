@@ -35,23 +35,23 @@ class GNNParser:
         acc, time, dacc, demand = obs
 
         # Current availability at t+1
-        current_avb = torch.tensor([acc[n][time + 1] * self.s for n in self.env.region]).view(1, 1, self.env.nregion).float()
+        current_avb = torch.tensor([acc[n][time + 1] * self.s for n in self.env.region], dtype=torch.float32).view(1, 1, self.env.nregion)
 
         # Future availability from t+2 to t+T
-        future_avb = torch.tensor([[(acc[n][time + 1] + dacc[n][t]) * self.s for n in self.env.region] for t in range(time + 1, time + self.T + 1)]).view(1, self.T, self.env.nregion).float()
+        future_avb = torch.tensor([[(acc[n][time + 1] + dacc[n][t]) * self.s for n in self.env.region] for t in range(time + 1, time + self.T + 1)], dtype=torch.float32).view(1, self.T, self.env.nregion)
 
         # Queue length 
-        queue_length = torch.tensor([len(self.env.agent_queue[self.agent_id][n]) * self.s for n in self.env.region]).view(1, 1, self.env.nregion).float()
+        queue_length = torch.tensor([len(self.env.agent_queue[self.agent_id][n]) * self.s for n in self.env.region], dtype=torch.float32).view(1, 1, self.env.nregion)
 
         # Current demand at t
-        current_demand = torch.tensor([sum([(demand[i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
+        current_demand = torch.tensor([sum([(demand[i, j][time])* self.s for j in self.env.region]) for i in self.env.region], dtype=torch.float32).view(1, 1, self.env.nregion)
 
         # Price features (conditional on observe_od_prices)
         if self.observe_od_prices:
             # OD price matrices: shape [1, nregion, nregion] for each agent
             own_current_price = torch.tensor([[self.env.agent_price[self.agent_id][i, j].get(time, 0) * self.s 
-                                              for j in self.env.region] 
-                                             for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
+                                               for j in self.env.region] 
+                                              for i in self.env.region], dtype=torch.float32).view(1, self.env.nregion, self.env.nregion)
             
             if self.no_share_info:
                 # Only include own prices, no competitor info
@@ -68,8 +68,8 @@ class GNNParser:
             else:
                 # Include competitor prices and difference
                 competitor_current_price = torch.tensor([[self.env.agent_price[self.opponent_id][i, j].get(time, 0) * self.s 
-                                                         for j in self.env.region] 
-                                                        for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
+                                                          for j in self.env.region] 
+                                                         for i in self.env.region], dtype=torch.float32).view(1, self.env.nregion, self.env.nregion)
                 
                 # Price difference: own - competitor (shape [1, nregion, nregion])
                 price_difference = own_current_price - competitor_current_price
@@ -86,7 +86,7 @@ class GNNParser:
                 )
         else:
             # Aggregated prices: shape [1, 1, nregion]
-            own_current_price = torch.tensor([sum([(self.env.agent_price[self.agent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
+            own_current_price = torch.tensor([sum([(self.env.agent_price[self.agent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region], dtype=torch.float32).view(1, 1, self.env.nregion)
 
             if self.no_share_info:
                 # Only include own prices, no competitor info
@@ -101,7 +101,7 @@ class GNNParser:
                 )
             else:
                 # Include competitor prices and difference
-                competitor_current_price = torch.tensor([sum([(self.env.agent_price[self.opponent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
+                competitor_current_price = torch.tensor([sum([(self.env.agent_price[self.opponent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region], dtype=torch.float32).view(1, 1, self.env.nregion)
 
                 # Price difference: own - competitor (shape [1, 1, nregion])
                 price_difference = own_current_price - competitor_current_price
@@ -283,7 +283,7 @@ class A2C(nn.Module):
             R = r + self.gamma * R
             returns.insert(0, R)
 
-        returns = torch.tensor(returns).to(self.device) / self.reward_scale
+        returns = torch.tensor(returns, dtype=torch.float32).to(self.device) / self.reward_scale
         
         # Calculate advantages
         advantages = []
@@ -304,7 +304,7 @@ class A2C(nn.Module):
             policy_losses.append(policy_loss)
             
             # Value loss unchanged
-            value_losses.append(F.smooth_l1_loss(value, torch.tensor([R]).to(self.device)))
+            value_losses.append(F.smooth_l1_loss(value, torch.tensor([R], dtype=torch.float32).to(self.device)))
         
         # Actor loss is just the policy loss
         a_loss = torch.stack(policy_losses).mean()
