@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-06
+
+- Add `--meta_action_mode soft` as an alternative to the default `multiplier` mode. Soft mode reinterprets the meta's daily α as a target price factor (2ρ) rather than a multiplier; ρ passes through unscaled and the low-level reward is shaped toward the target via `-λ·(2·mean(ρ) − α)²`. Across 3 seeds at 200k episodes, soft λ=0.1 yields ~68k vs multiplier's ~63k while eliminating the ρ compensation dynamic. Guarded to mode-2 origin pricing with an active meta-policy. See `Investigations/2026-06-06_compensation-fix-results.md` for the full experimental record (cap, goal, softaug, and cond were also tested and rejected).
+
 ## 2026-05-25
 
 - Fix meta-policy reward normalization — rewards stored in the PPO buffer were raw daily profit (~3300/day) while the observation vector uses profit/reward_scalar (~1.65/day), causing a ~2000× scale mismatch. Dividing by reward_scalar before storage brings meta_critic_loss from ~3M to O(10–100) and stops the shared trunk from being dominated by critic gradients.
