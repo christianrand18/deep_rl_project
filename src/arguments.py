@@ -356,12 +356,13 @@ class A2CArgumentBuilder:
 			"--meta_action_mode",
 			type=str,
 			default="multiplier",
-			choices=["multiplier", "soft"],
+			choices=["multiplier", "soft", "multiplier_soft"],
 			help="How the meta action composes with the low-level price scalar. "
 			     "'multiplier' (default): effective = clamp(alpha*rho, 0, 2). "
-			     "'soft': alpha is a target price factor (2*rho), not a multiplier; "
-			     "rho passes through unscaled and the low-level reward is shaped toward the target. "
-			     "soft requires --mode 2 origin pricing and --num_days > 1.",
+			     "'soft': alpha is a target price factor; rho passes through, low-level shaped toward target. "
+			     "'multiplier_soft': keeps the multiplier AND adds shaping on the effective price — "
+			     "penalises the low-level when 2*mean(effective_rho) deviates from alpha. "
+			     "Non-multiplier modes require --mode 2 origin pricing and --num_days > 1.",
 		)
 		parser.add_argument("--meta_reg_lambda", type=float, default=0.1,
 			help="Weight on the soft-mode penalty (2*mean(rho)-alpha)^2, in post-scaling units (default: 0.1).")
