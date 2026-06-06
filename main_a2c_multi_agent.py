@@ -478,6 +478,7 @@ if not args.test:
     if accumulator is not None and not args.test:
         wandb.define_metric("day/*", step_metric="meta/global_day")
         wandb.define_metric("debug/*", step_metric="episode")
+        wandb.define_metric("parallel/*", step_metric="episode")
 
     # Picard coordinator (only allocated when --parallel_days is set)
     picard_solver = (

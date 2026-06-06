@@ -25,6 +25,7 @@ Two side-channel concerns get handled here too:
 
 import multiprocessing as mp
 import random as _random
+import time as _time
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Optional
@@ -92,12 +93,22 @@ class GradPacket:
 
 
 @dataclass
+class WorkerTiming:
+    """Per-worker timing breakdown, shipped back to main for profiling."""
+    reset_s: float          # env.reset()
+    day_s: float            # run_day()  (the inner step loop)
+    grad_s: float           # _compute_partial_gradients()
+    total_s: float          # wall-clock of _worker()
+
+
+@dataclass
 class WorkerResult:
     i_day: int
     capture: WorkerDayCapture
     ctx_after: SimpleNamespace        # per-day deltas to merge into central ctx
     grad_packets: dict                # {agent_id: GradPacket} non-fix agents only
     day_logs: list                    # wandb dicts queued by run_day
+    timing: Optional[WorkerTiming] = None  # per-worker profiling
 
 
 # ── gradient helpers ──────────────────────────────────────────────────────────
@@ -339,6 +350,7 @@ def _worker(task):
     episode (otherwise the fixed point wouldn't exist — two iterations
     would see different demand for the same i_day).
     """
+    _t0 = _time.perf_counter()
     i_episode, payload = task
     state = _WORKER_STATE
     env = state['env']
@@ -347,7 +359,9 @@ def _worker(task):
 
     # Deterministic env state for this (episode, day).
     np.random.seed(payload.day_seed)
+    _t1 = _time.perf_counter()
     env.reset()
+    _t_reset = _time.perf_counter() - _t1
 
     # Worker copies of the agents accumulate only this day's transitions.
     for a in model_agents:
@@ -356,13 +370,17 @@ def _worker(task):
             model_agents[a].saved_actions = []
 
     ctx, shim = _build_worker_ctx(env, payload, i_episode)
+    _t1 = _time.perf_counter()
     run_day(payload.i_day, ctx)
+    _t_day = _time.perf_counter() - _t1
 
     grad_packets = {}
+    _t1 = _time.perf_counter()
     if args.mode not in [3, 4]:
         for a in [0, 1]:
             if a != args.fix_agent:
                 grad_packets[a] = _compute_partial_gradients(model_agents[a])
+    _t_grad = _time.perf_counter() - _t1
 
     return WorkerResult(
         i_day=payload.i_day,
@@ -370,6 +388,12 @@ def _worker(task):
         ctx_after=_strip_ctx(ctx),
         grad_packets=grad_packets,
         day_logs=ctx.day_logs,
+        timing=WorkerTiming(
+            reset_s=_t_reset,
+            day_s=_t_day,
+            grad_s=_t_grad,
+            total_s=_time.perf_counter() - _t0,
+        ),
     )
 
 
@@ -453,13 +477,36 @@ def run_days_parallel(ctx, picard_solver, pool) -> list:
 
     payloads = [picard_solver.make_worker_payload(i) for i in range(num_days)]
     tasks = [(ctx.i_episode, p) for p in payloads]
+    _t_pool = _time.perf_counter()
     results = pool.map(_worker, tasks, chunksize=1)
+    _t_pool = _time.perf_counter() - _t_pool
     results.sort(key=lambda r: r.i_day)   # defensive; pool.map preserves order
 
     for r in results:
         picard_solver.merge_worker_capture(r.i_day, r.capture)
         _merge_ctx_delta(ctx, r.ctx_after, env_mode)
         ctx.day_logs.extend(r.day_logs)
+
+    # Per-worker timing statistics → wandb
+    _timings = [r.timing for r in results if r.timing is not None]
+    if _timings:
+        _totals   = [t.total_s for t in _timings]
+        _resets   = [t.reset_s for t in _timings]
+        _days     = [t.day_s   for t in _timings]
+        _grads    = [t.grad_s  for t in _timings]
+        ctx.day_logs.append({
+            "episode":                         ctx.i_episode + 1,
+            "parallel/pool_map_s":              _t_pool,
+            "parallel/worker_total_max_s":      max(_totals),
+            "parallel/worker_total_mean_s":     sum(_totals) / len(_totals),
+            "parallel/worker_total_min_s":      min(_totals),
+            "parallel/worker_reset_max_s":      max(_resets),
+            "parallel/worker_reset_mean_s":     sum(_resets) / len(_resets),
+            "parallel/worker_day_max_s":        max(_days),
+            "parallel/worker_day_mean_s":       sum(_days) / len(_days),
+            "parallel/worker_grad_max_s":       max(_grads),
+            "parallel/worker_grad_mean_s":      sum(_grads) / len(_grads),
+        })
 
     return results
 
