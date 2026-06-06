@@ -99,6 +99,7 @@ class WorkerTiming:
     day_s: float            # run_day()  (the inner step loop)
     grad_s: float           # _compute_partial_gradients()
     total_s: float          # wall-clock of _worker()
+    day_breakdown: Optional[dict] = None  # {phase: seconds} inside run_day()
 
 
 @dataclass
@@ -289,6 +290,7 @@ def _build_worker_ctx(env, payload: WorkerDayPayload, i_episode: int):
         episode_logprobs={0: [], 1: []},
         day_logs=[],
         env_pre_reset=True,  # day_runner: skip its inner env.reset_day (we did it)
+        timing_breakdown={}, # day_runner populates with per-phase timings (seconds)
     )
     if env.mode == 0:
         ctx.actions_concentration_dirichlet = {0: [], 1: []}
@@ -393,6 +395,7 @@ def _worker(task):
             day_s=_t_day,
             grad_s=_t_grad,
             total_s=_time.perf_counter() - _t0,
+            day_breakdown=dict(ctx.timing_breakdown) if ctx.timing_breakdown else None,
         ),
     )
 
@@ -494,7 +497,7 @@ def run_days_parallel(ctx, picard_solver, pool) -> list:
         _resets   = [t.reset_s for t in _timings]
         _days     = [t.day_s   for t in _timings]
         _grads    = [t.grad_s  for t in _timings]
-        ctx.day_logs.append({
+        _wandb_timing = {
             "episode":                         ctx.i_episode + 1,
             "parallel/pool_map_s":              _t_pool,
             "parallel/worker_total_max_s":      max(_totals),
@@ -506,7 +509,20 @@ def run_days_parallel(ctx, picard_solver, pool) -> list:
             "parallel/worker_day_mean_s":       sum(_days) / len(_days),
             "parallel/worker_grad_max_s":       max(_grads),
             "parallel/worker_grad_mean_s":      sum(_grads) / len(_grads),
-        })
+        }
+        # Per-phase day breakdown: aggregate across workers, log mean/max per phase.
+        _breakdowns = [t.day_breakdown for t in _timings if t.day_breakdown]
+        if _breakdowns:
+            _phases = sorted(_breakdowns[0].keys())
+            for _phase in _phases:
+                _vals = [b[_phase] for b in _breakdowns if _phase in b]
+                if _vals:
+                    _mean = sum(_vals) / len(_vals)
+                    _max  = max(_vals)
+                    _wandb_timing[f"parallel/day_{_phase}_mean_s"] = _mean
+                    _wandb_timing[f"parallel/day_{_phase}_max_s"]  = _max
+                    _wandb_timing[f"parallel/day_{_phase}_ratio"]  = _max / _mean if _mean > 0 else 0.0
+        ctx.day_logs.append(_wandb_timing)
 
     return results
 

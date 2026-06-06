@@ -23,6 +23,8 @@ Design contract:
     caller without any explicit write-back.
 """
 
+import time as _time
+
 import numpy as np
 
 from src.misc.utils import dictsum
@@ -80,6 +82,19 @@ def run_day(i_day, ctx):
     episode_min_concentration_dirichlet = getattr(ctx, 'episode_min_concentration_dirichlet', None)
     episode_max_concentration_dirichlet = getattr(ctx, 'episode_max_concentration_dirichlet', None)
 
+    # Fine-grained day-phase timing (parallel profiling — ctx carries the dict)
+    _tb = getattr(ctx, 'timing_breakdown', None)
+    _t_phase = None
+
+    def _t_start():
+        nonlocal _t_phase
+        if _tb is not None:
+            _t_phase = _time.perf_counter()
+
+    def _t_end(phase: str):
+        if _tb is not None and _t_phase is not None:
+            _tb[phase] = _tb.get(phase, 0.0) + _time.perf_counter() - _t_phase
+
     # === BEGIN verbatim copy from main_a2c_multi_agent.py (for i_day body) ===
     # Skip env.reset_day() when the caller (e.g. parallel workers) has
     # already put env into a fresh "start of day" state with its own seeded
@@ -98,11 +113,15 @@ def run_day(i_day, ctx):
 
     # Reset daily accumulator (used for both meta-policy state and per-day WandB logs)
     if accumulator is not None:
+        _t_start()
         accumulator.reset(env)
+        _t_end('accumulator')
     # Meta-policy: select daily multipliers
     if args.parallel_days:
         # Picard: inject brand_momentum, seed RNGs, return deterministic alpha.
+        _t_start()
         meta_multipliers = picard_solver.prepare_day(i_day, env)
+        _t_end('prepare_day')
     elif meta_policies:
         for _a in meta_policies:
             meta_multipliers[_a] = meta_policies[_a].select_action(meta_obs[_a])
@@ -120,7 +139,9 @@ def run_day(i_day, ctx):
             submitted_prices = None
         if env.mode == 0:
             # Make Match Step
+            _t_start()
             obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
+            _t_end('match_step')
 
             # Update episode reward
             episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
@@ -139,7 +160,9 @@ def run_day(i_day, ctx):
                     ])
                     concentrations[a] = np.zeros((env.nregion, 1))  # Dummy for tracking
                 else:
+                    _t_start()
                     action_rl[a], concentrations[a], logprob = model_agents[a].select_action(obs[a], return_concentration=True)
+                    _t_end('select_action')
                     episode_logprobs[a].append(logprob)
 
             # Track concentration (mode 0: Dirichlet concentration for rebalancing)
@@ -172,16 +195,22 @@ def run_day(i_day, ctx):
                     }
 
             # Compute rebalancing flows for both agents sequentially
+            _t_start()
             rebAction = {a: solveRebFlow(env, desiredAcc[a], a) for a in [0, 1]}
+            _t_end('solve_reb')
 
+            _t_start()
             new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
+            _t_end('reb_step')
             episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
 
             for agent_id in [0, 1]:
                 model_agents[agent_id].rewards.append((paxreward[agent_id] + rebreward[agent_id]))
 
         elif env.mode == 1:
+            _t_start()
             obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+            _t_end('match_step')
 
             episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -201,7 +230,9 @@ def run_day(i_day, ctx):
                         action_rl[a] = np.array([0.5] * env.nregion)
                     concentrations[a] = np.zeros((env.nregion, 2))  # Dummy for tracking
                 else:
+                    _t_start()
                     action_rl[a], concentrations[a], logprob = model_agents[a].select_action(obs[a], return_concentration=True)
+                    _t_end('select_action')
                     episode_logprobs[a].append(logprob)
 
             # Track prices during episode (mode 1: action_rl is price scalar)
@@ -256,11 +287,15 @@ def run_day(i_day, ctx):
                     actions_effective_price[a].append(np.mean(2 * np.array(action_rl[a])))
 
             # Matching update (global step)
+            _t_start()
             env.matching_update()
+            _t_end('matching_update')
 
         elif env.mode == 2:
             # --- Matching step ---
+            _t_start()
             obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+            _t_end('match_step')
 
             episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -289,7 +324,9 @@ def run_day(i_day, ctx):
                         ])
                     concentrations[a] = np.zeros((env.nregion, 3))  # Dummy for tracking
                 else:
+                    _t_start()
                     action_rl[a], concentrations[a], logprob = model_agents[a].select_action(obs[a], return_concentration=True)
+                    _t_end('select_action')
                     episode_logprobs[a].append(logprob)
 
             # Track prices during episode (mode 2: price part of action)
@@ -398,9 +435,13 @@ def run_day(i_day, ctx):
 
             # --- Rebalancing step ---
             # Compute rebalancing flows for both agents sequentially
+            _t_start()
             rebAction = {a: solveRebFlow(env, desiredAcc[a], a) for a in [0, 1]}
+            _t_end('solve_reb')
 
+            _t_start()
             new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
+            _t_end('reb_step')
 
             episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
             for agent_id in [0, 1]:
@@ -428,13 +469,17 @@ def run_day(i_day, ctx):
             }
 
             # Matching step with fixed prices
+            _t_start()
             obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+            _t_end('match_step')
 
             # Track rewards (no rebalancing cost in baseline)
             episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
             # NO rebalancing step - just update vehicle arrivals from completed passenger trips
+            _t_start()
             env.matching_update()
+            _t_end('matching_update')
 
         elif env.mode == 4:
             # === BASELINE MODE 4: Uniform rebalancing, fixed prices ===
@@ -445,7 +490,9 @@ def run_day(i_day, ctx):
             }
 
             # Matching step with fixed prices
+            _t_start()
             obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+            _t_end('match_step')
 
             # Track rewards
             episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
@@ -464,9 +511,13 @@ def run_day(i_day, ctx):
                 }
 
             # Compute rebalancing flows for both agents sequentially
+            _t_start()
             rebAction = {a: solveRebFlow(env, desiredAcc[a], a) for a in [0, 1]}
+            _t_end('solve_reb')
 
+            _t_start()
             new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
+            _t_end('reb_step')
             episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
 
         else:
@@ -494,11 +545,15 @@ def run_day(i_day, ctx):
         day_total_demand += system_info["total_demand"]
 
         if accumulator is not None:
+            _t_start()
             accumulator.update(info, system_info, submitted_prices)
+            _t_end('accumulator')
 
         step += 1
 
+    _t_start()
     env.update_brand_momentum(served_counts=day_served, total_demand=day_total_demand)
+    _t_end('update_bm')
 
     if args.parallel_days:
         # Picard path: capture day state; meta buffers filled by commit() after convergence.
@@ -506,7 +561,9 @@ def run_day(i_day, ctx):
             a: (accumulator.profit[a] - accumulator.reb_cost[a]) / args.reward_scalar
             for a in [0, 1]
         }
+        _t_start()
         picard_solver.record_day(i_day, env, accumulator, meta_reward)
+        _t_end('record_day')
     else:
         if meta_policies:
             for _a in meta_policies:
