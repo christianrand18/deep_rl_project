@@ -93,6 +93,31 @@ class EpisodeResult:
     delta_history: list     # one entry per Picard iteration
 
 
+@dataclass
+class WorkerDayPayload:
+    """Self-contained per-day data shipped to a parallel worker.
+
+    Avoids sending the full PicardSolver across the process boundary. The
+    worker uses these fields via a small shim that quacks like the solver
+    (see src/algos/picard/parallel.py::_WorkerShim).
+    """
+    i_day: int
+    bm_in: dict             # {agent: float} → injected as env.brand_momentum
+    day_seed: int           # seeds np / env._shuffle_rng / torch
+    meta_alpha: dict        # {agent: float} → returned by shim.prepare_day
+    num_days: int           # for shim.record_day → accumulator.daily_state
+    reward_scalar: float    # ditto
+    agents: list
+
+
+@dataclass
+class WorkerDayCapture:
+    """Per-day outcome shipped back from a parallel worker."""
+    bm_out: dict            # {agent: float} env.brand_momentum after the day
+    meta_obs: dict          # {agent: ndarray[7]}
+    meta_reward: dict       # {agent: float}
+
+
 class PicardSolver:
     """Picard fixed-point iteration coordinator.
 
@@ -138,6 +163,10 @@ class PicardSolver:
         self._last_result: Optional[EpisodeResult] = None
         self._prev_S: Optional[list] = None
         self._anderson_history: list = []   # list of (x_flat, Gx_flat) per iteration
+        # meta_out cache keyed by i_day; populated by make_worker_payload,
+        # consumed by merge_worker_capture. Resets per Picard iteration so
+        # earlier iterations' meta-policy noise outputs don't leak in.
+        self._meta_out_by_day: dict = {}
 
     # ── coordinator API ───────────────────────────────────────────────────────
 
@@ -151,6 +180,7 @@ class PicardSolver:
         self._delta_history = []
         self._last_result = None
         self._anderson_history = []
+        self._meta_out_by_day = {}
 
     def prepare_day(self, i_day: int, env) -> dict:
         """Inject predicted state; return meta multipliers for this day.
@@ -233,7 +263,54 @@ class PicardSolver:
         self._S_old = list(self._S_pred)
         self._k += 1
         self._day_results = []
+        self._meta_out_by_day = {}
         return True
+
+    # ── parallel-worker bridge ────────────────────────────────────────────────
+
+    def make_worker_payload(self, i_day: int) -> WorkerDayPayload:
+        """Build a self-contained payload for a worker to run day ``i_day``.
+
+        Side effect: caches the day's meta_out (alpha, logp, value tuples) so
+        ``merge_worker_capture`` can reconstruct the DayResult without
+        round-tripping the torch outputs back through pickle (the meta-policy
+        networks only live in the central process).
+        """
+        meta_out = self._meta_forward(self._S_pred[i_day], self._z_noise[i_day])
+        self._meta_out_by_day[i_day] = meta_out
+        return WorkerDayPayload(
+            i_day=i_day,
+            bm_in=dict(self._S_pred[i_day].brand_momentum),
+            day_seed=int(self._day_seeds[i_day]),
+            meta_alpha={a: float(meta_out[a][0]) for a in self.agents},
+            num_days=self.num_days,
+            reward_scalar=self.args.reward_scalar,
+            agents=list(self.agents),
+        )
+
+    def merge_worker_capture(self, i_day: int, capture: WorkerDayCapture) -> None:
+        """Replay a worker's per-day capture into central state.
+
+        Mirrors what ``record_day`` would have done, but using ``capture``
+        (filled by the worker) instead of reading live env/accumulator state.
+        Call in i_day order so ``_day_results`` stays day-ordered.
+
+        ``meta_obs_in`` is read directly from ``self._S_pred[i_day]`` rather
+        than from ``self._current_prev_state`` (which only ``prepare_day``
+        on the central solver sets — workers run ``prepare_day`` on the shim,
+        so the central solver's per-call state is irrelevant here).
+        """
+        next_state = DayState(
+            brand_momentum=dict(capture.bm_out),
+            meta_obs=dict(capture.meta_obs),
+        )
+        self._day_results.append(DayResult(
+            day_idx=i_day,
+            next_state=next_state,
+            meta_obs_in={a: self._S_pred[i_day].meta_obs[a] for a in self.agents},
+            meta_out=dict(self._meta_out_by_day[i_day]),
+            meta_reward=dict(capture.meta_reward),
+        ))
 
     def commit(self, meta_policies) -> EpisodeResult:
         """Populate meta-policy PPO buffers from the converged day results.

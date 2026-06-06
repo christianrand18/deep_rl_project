@@ -391,6 +391,9 @@ class A2CArgumentBuilder:
 		parser.add_argument("--picard_omega", type=float, default=1.0,
 			help="Damping factor for Picard update. "
 			     "BM_new = (1-ω)·BM_old + ω·BM_proposed. 1.0=no damping, 0.5=half-step. (default: 1.0)")
+		parser.add_argument("--picard_parallel_workers", type=int, default=1,
+			help="Number of worker processes for parallel day execution within a Picard iteration. "
+			     "1 = sequential (default). Only effective when --parallel_days is set.")
 		return parser
 
 	@classmethod
