@@ -377,11 +377,11 @@ class A2CArgumentBuilder:
 			help="Enable Picard fixed-point parallelisation of the multi-day loop. "
 			     "Requires --num_days > 1. No-op when num_days == 1.",
 		)
-		parser.add_argument("--picard_max_iters", type=int, default=6,
+		parser.add_argument("--picard_max_iters", type=int, default=10,
 			help="Maximum Picard iterations per episode (default: 6).")
-		parser.add_argument("--picard_tol", type=float, default=1e-3,
+		parser.add_argument("--picard_tol", type=float, default=5e-3,
 			help="Convergence tolerance for Picard iteration (max-norm on state; default: 1e-3).")
-		parser.add_argument("--picard_update_strategy", type=str, default="analytic",
+		parser.add_argument("--picard_update_strategy", type=str, default="anderson",
 			choices=["jacobi", "analytic", "anderson"],
 			help="Picard S_pred update strategy. 'jacobi': pure full-replace (N+1 iters). "
 			     "'analytic': analytical BM propagation via observed market shares. "
