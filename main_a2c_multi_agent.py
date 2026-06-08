@@ -669,16 +669,31 @@ if not args.test:
         # ── end of while rerun ──────────────────────────────────────────────
         if args.parallel_days:
             picard_result = picard_solver.commit(meta_policies)
+            # Days run in forked workers, so env.brand_momentum (main process)
+            # never left its env.reset() value. Sync from the converged final
+            # day so the episode-end agent{0,1}/brand_momentum log is correct.
+            env.brand_momentum = dict(picard_result.day_results[-1].next_state.brand_momentum)
             # Expose final day's meta_obs for any post-episode code that reads it.
             meta_obs = {a: picard_result.day_results[-1].next_state.meta_obs[a] for a in [0, 1]}
             if not args.test:
-                wandb.log({
+                debug_log = {
                     "debug/picard_K_used": picard_result.K_used,
                     "debug/picard_converged": int(picard_result.converged),
                     "debug/picard_delta_i1": picard_result.delta_history[0] if picard_result.delta_history else 0.0,
                     "debug/picard_final_delta": picard_result.final_delta,
                     "episode": i_episode + 1,
-                })
+                }
+                # Per-day breakdowns at the converged fixed point — only the final
+                # iteration's days are logged (pre-convergence iterations are noise);
+                # overwritten fresh each episode so the latest converged trajectory
+                # across days 0..N-1 is always what's visible.
+                for a in [0, 1]:
+                    for d, day_result in enumerate(picard_result.day_results):
+                        debug_log[f"debug/agent{a}_mean_eff_price_d{d}"] = \
+                            day_result.wandb_metrics.get(f"agent{a}_mean_effective_price", 0.0)
+                        debug_log[f"debug/agent{a}_brand_momentum_d{d}"] = \
+                            day_result.next_state.brand_momentum[a]
+                wandb.log(debug_log)
 
         # Update both agent models after episode and collect training metrics
         grad_norms = {}

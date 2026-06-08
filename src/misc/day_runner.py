@@ -93,6 +93,10 @@ def run_day(i_day, ctx):
     # Snapshot episode_reward at day start so we can compute per-day step-reward sum
     # for reward-attribution debug logging (compare to day/agent{a}_daily_profit).
     day_reward_start = dict(episode_reward)
+    # Snapshot actions_effective_price length so we can slice out just this
+    # day's entries (it accumulates across days on the sequential/main ctx,
+    # but starts fresh per-day on parallel worker ctx — slicing handles both).
+    day_eff_price_start = {a: len(actions_effective_price[a]) for a in [0, 1]}
     done = False
     step = 0
 
@@ -506,7 +510,13 @@ def run_day(i_day, ctx):
             a: (accumulator.profit[a] - accumulator.reb_cost[a]) / args.reward_scalar
             for a in [0, 1]
         }
-        picard_solver.record_day(i_day, env, accumulator, meta_reward)
+        day_eff_price = {
+            a: float(np.mean(actions_effective_price[a][day_eff_price_start[a]:]))
+            if len(actions_effective_price[a]) > day_eff_price_start[a] else 0.0
+            for a in [0, 1]
+        }
+        picard_solver.record_day(i_day, env, accumulator, meta_reward,
+                                 wandb_metrics={f"agent{a}_mean_effective_price": day_eff_price[a] for a in [0, 1]})
     else:
         if meta_policies:
             for _a in meta_policies:

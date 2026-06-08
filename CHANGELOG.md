@@ -1,7 +1,13 @@
 # Changelog
 
+## 2026-06-08
+
+- Fix `agent{0,1}/brand_momentum` always logging 0.5 on the parallel-days Picard path — days run in forked worker copies of `env`, so the main process's `env.brand_momentum` never left its `reset()` value; now synced from the converged final day's state after `commit()`.
+- Add per-day debug logs for brand momentum and mean effective price scalar at Picard convergence (`debug/agent{a}_brand_momentum_d{N}`, `debug/agent{a}_mean_eff_price_d{N}`) — only the converged iteration is logged, refreshed each episode, to inspect the within-episode trajectory across days.
+
 ## 2026-06-06
 
+- Add parallel day execution to the Picard solver (`--picard_parallel_workers`) — dispatches a Picard iteration's N days to a forked worker pool instead of running them sequentially; workers compute per-day A2C gradients locally (autograd graphs can't be pickled across processes) and ship detached grad tensors back for central aggregation.
 - Add `--meta_action_mode soft` as an alternative to the default `multiplier` mode. Soft mode reinterprets the meta's daily α as a target price factor (2ρ) rather than a multiplier; ρ passes through unscaled and the low-level reward is shaped toward the target via `-λ·(2·mean(ρ) − α)²`. Across 3 seeds at 200k episodes, soft λ=0.1 yields ~68k vs multiplier's ~63k while eliminating the ρ compensation dynamic. Guarded to mode-2 origin pricing with an active meta-policy. See `Investigations/2026-06-06_compensation-fix-results.md` for the full experimental record (cap, goal, softaug, and cond were also tested and rejected).
 
 ## 2026-05-25

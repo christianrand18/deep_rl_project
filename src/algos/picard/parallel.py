@@ -64,7 +64,7 @@ class _WorkerShim:
         torch.manual_seed(self._payload.day_seed)
         return dict(self._payload.meta_alpha)
 
-    def record_day(self, i_day, env, accumulator, meta_reward) -> None:
+    def record_day(self, i_day, env, accumulator, meta_reward, wandb_metrics) -> None:
         accumulator.momentum_snapshot = dict(env.brand_momentum)
         self.captured = WorkerDayCapture(
             bm_out=dict(env.brand_momentum),
@@ -75,6 +75,7 @@ class _WorkerShim:
                 for a in self._payload.agents
             },
             meta_reward=dict(meta_reward),
+            wandb_metrics=dict(wandb_metrics),
         )
 
 

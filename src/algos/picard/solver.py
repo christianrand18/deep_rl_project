@@ -33,7 +33,7 @@ manages four injection points around the existing day loop:
 
                 env.update_brand_momentum(served_counts=day_served, total_demand=day_total_demand)
                 meta_reward = {a: accumulator.profit[a] - accumulator.reb_cost[a] for a in [0, 1]}
-                solver.record_day(i_day, env, accumulator, meta_reward)   # ← captures state
+                solver.record_day(i_day, env, accumulator, meta_reward, wandb_metrics={})  # ← captures state
 
             rerun = solver.next_iteration(env)                            # ← convergence check
 
@@ -116,6 +116,7 @@ class WorkerDayCapture:
     bm_out: dict            # {agent: float} env.brand_momentum after the day
     meta_obs: dict          # {agent: ndarray[7]}
     meta_reward: dict       # {agent: float}
+    wandb_metrics: dict     # passthrough → DayResult.wandb_metrics, for post-convergence logging
 
 
 class PicardSolver:
@@ -207,7 +208,7 @@ class PicardSolver:
         self._current_meta_out = meta_out
         return {a: float(meta_out[a][0]) for a in self.agents}
 
-    def record_day(self, i_day: int, env, accumulator, meta_reward: dict):
+    def record_day(self, i_day: int, env, accumulator, meta_reward: dict, wandb_metrics: dict):
         """Capture the day's outcome.
 
         Call after env.update_brand_momentum() and accumulator has been updated
@@ -215,6 +216,8 @@ class PicardSolver:
 
         meta_reward: {agent_id: float}. Typically:
             {a: accumulator.profit[a] - accumulator.reb_cost[a] for a in [0, 1]}
+        wandb_metrics: arbitrary per-day scalars to surface post-convergence via
+            EpisodeResult.day_results[d].wandb_metrics (e.g. mean effective price).
         """
         accumulator.momentum_snapshot = dict(env.brand_momentum)
         next_state = DayState(
@@ -232,6 +235,7 @@ class PicardSolver:
             meta_obs_in={a: self._current_prev_state.meta_obs[a] for a in self.agents},
             meta_out=dict(self._current_meta_out),
             meta_reward=dict(meta_reward),
+            wandb_metrics=dict(wandb_metrics),
         ))
 
     def next_iteration(self, env) -> bool:
@@ -310,6 +314,7 @@ class PicardSolver:
             meta_obs_in={a: self._S_pred[i_day].meta_obs[a] for a in self.agents},
             meta_out=dict(self._meta_out_by_day[i_day]),
             meta_reward=dict(capture.meta_reward),
+            wandb_metrics=dict(capture.wandb_metrics),
         ))
 
     def commit(self, meta_policies) -> EpisodeResult:
