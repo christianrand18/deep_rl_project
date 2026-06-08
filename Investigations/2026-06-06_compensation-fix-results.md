@@ -131,3 +131,11 @@ The improvement is modest and the mechanism is impure (the meta α is scattered,
 2. **Would conditioning-only (round 4) work with more episodes?** Possibly. At 200k episodes α still saturated. Could be worth revisiting with a longer run or curriculum (start with conditioning, then layer in shaping).
 
 3. **Is the multiplier architecture fundamentally wrong?** The nometa baseline at 81k suggests the low-level alone already optimizes well. The meta may need a different role — multi-day fleet pre-positioning or brand momentum strategy — rather than a pricing multiplier that the low-level can fight.
+
+---
+
+## Follow-up: `multiplier_soft` (2026-06-08, in progress)
+
+A new mode was added that keeps the multiplier composition (preserving the meta's causal link, unlike `soft`) and layers the shaping penalty on top of the *effective* price factor: `-λ·(2·mean(effective) − α)²`. Sweep over λ ∈ {0.1, 0.3, 1.0} × 3 seeds, running on HPC (`batch_jobs/msoft/`, branch `15-multiplier-soft`).
+
+Mid-run snapshot (~80k/200k episodes): at λ=0.3/1.0, raw ρ has settled near 0.50 (neutral — the compensation push is gone) while α has drifted up to ~0.85–1.1 rather than exploring undercut territory; λ=0.1 still tracks close to the `multiplier` baseline. Profit is comparable across all configs (54–65k). Too early for conclusions — will revisit at 200k.

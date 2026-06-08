@@ -2,6 +2,7 @@
 
 ## 2026-06-06
 
+- Add `--meta_action_mode multiplier_soft` — keeps the existing multiplier composition (`effective = clip(α·ρ, 0, 2)`, preserving the meta's causal link to the environment) and additionally shapes the low-level reward toward the effective price factor matching α: `-λ·(2·mean(effective) − α)²`. Tests whether shaping can discourage ρ compensation without decoupling the two levels the way `soft` does. Sweep over λ ∈ {0.1, 0.3, 1.0} × 3 seeds running on HPC (`batch_jobs/msoft/`); results pending.
 - Add `--meta_action_mode soft` as an alternative to the default `multiplier` mode. Soft mode reinterprets the meta's daily α as a target price factor (2ρ) rather than a multiplier; ρ passes through unscaled and the low-level reward is shaped toward the target via `-λ·(2·mean(ρ) − α)²`. Across 3 seeds at 200k episodes, soft λ=0.1 yields ~68k vs multiplier's ~63k while eliminating the ρ compensation dynamic. Guarded to mode-2 origin pricing with an active meta-policy. See `Investigations/2026-06-06_compensation-fix-results.md` for the full experimental record (cap, goal, softaug, and cond were also tested and rejected).
 
 ## 2026-05-25
