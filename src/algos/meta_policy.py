@@ -16,7 +16,7 @@ class MetaPolicy(nn.Module):
     """
 
     def __init__(self, obs_dim, hidden_dim=128, lr=3e-4, gamma=0.99,
-                 clip_eps=0.2, n_ppo_epochs=4, device='cpu'):
+                 clip_eps=0.2, n_ppo_epochs=4, device='cpu', log_std_init=-0.6931):
         super().__init__()
         self.gamma = gamma
         self.clip_eps = clip_eps
@@ -30,7 +30,7 @@ class MetaPolicy(nn.Module):
         # Actor: mean ∈ (0, 2) via 2*sigmoid; single learnable log_std
         self.actor_head = nn.Linear(hidden_dim, 1)
         self.critic_head = nn.Linear(hidden_dim, 1)
-        self.log_std = nn.Parameter(torch.tensor([-0.6931]))  # std ≈ 0.5 initially
+        self.log_std = nn.Parameter(torch.tensor([log_std_init]))
 
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 

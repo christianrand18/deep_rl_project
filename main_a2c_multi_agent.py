@@ -350,7 +350,7 @@ if not args.test:
                 total_vehicles=args.total_vehicles)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed=args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions, brand_momentum_lambda=args.brand_momentum_lambda, brand_momentum_gamma=args.brand_momentum_gamma)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed=args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions, brand_momentum_lambda=args.brand_momentum_lambda, brand_momentum_gamma=args.brand_momentum_gamma, brand_momentum_init=args.brand_momentum_init)
     
     # Print fixed agent information
     print_multi_train_mode_banner(args.fix_agent)
@@ -468,6 +468,7 @@ if not args.test:
                 clip_eps=args.meta_clip_eps,
                 n_ppo_epochs=args.meta_ppo_epochs,
                 device=device,
+                log_std_init=args.meta_log_std_init,
             )
     # Accumulator runs whenever multi-day or meta is active — enables per-day WandB logging
     # for drift detection in no-meta multi-day runs.
@@ -1048,7 +1049,7 @@ else:
                 agent0_vehicle_ratio=args.agent0_vehicle_ratio,
                 total_vehicles=args.total_vehicles)
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed=args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions, brand_momentum_lambda=args.brand_momentum_lambda, brand_momentum_gamma=args.brand_momentum_gamma)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed=args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south, od_price_actions=args.od_price_actions, brand_momentum_lambda=args.brand_momentum_lambda, brand_momentum_gamma=args.brand_momentum_gamma, brand_momentum_init=args.brand_momentum_init)
     env.track_trip_assignments = True
 
     # Print fixed agent information

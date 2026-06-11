@@ -320,6 +320,12 @@ class A2CArgumentBuilder:
 			help="Strength of brand momentum in MNL utility (default: 0.0 = disabled, reproduces baseline).",
 		)
 		parser.add_argument(
+			"--brand_momentum_init",
+			type=float,
+			default=0.5,
+			help="Initial value of M_o(0) for both agents (default: 0.5).",
+		)
+		parser.add_argument(
 			"--meta_policy",
 			type=str,
 			default="none",
@@ -352,6 +358,9 @@ class A2CArgumentBuilder:
 			help="PPO clip epsilon for meta-policy (default: 0.2).")
 		parser.add_argument("--meta_ppo_epochs", type=int, default=4,
 			help="Number of PPO epochs per meta-policy update (default: 4).")
+		parser.add_argument("--meta_log_std_init", type=float, default=-0.6931,
+			help="Initial value of the meta-policy actor's learnable log_std, controlling "
+			     "initial exploration noise (default: -0.6931, i.e. std ≈ 0.5).")
 		parser.add_argument(
 			"--meta_action_mode",
 			type=str,

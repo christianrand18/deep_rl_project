@@ -11,7 +11,7 @@ from sklearn.neighbors import KNeighborsRegressor
 from src.envs.structures import generate_passenger
 
 class AMoD:
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept, wage, use_dynamic_wage_man_south=False, od_price_actions=False, brand_momentum_lambda=0.9, brand_momentum_gamma=0.0):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept, wage, use_dynamic_wage_man_south=False, od_price_actions=False, brand_momentum_lambda=0.9, brand_momentum_gamma=0.0, brand_momentum_init=0.5):
         self.scenario = deepcopy(scenario)
         self.od_price_actions = od_price_actions
         self.mode = mode
@@ -197,7 +197,8 @@ class AMoD:
 
         self.bm_lambda = brand_momentum_lambda
         self.bm_gamma = brand_momentum_gamma
-        self.brand_momentum = {0: 0.5, 1: 0.5}
+        self.bm_init = brand_momentum_init
+        self.brand_momentum = {0: self.bm_init, 1: self.bm_init}
 
         # Trip assignment tracking: stores detailed data for each trip
         self.trip_assignments = []
@@ -668,7 +669,7 @@ class AMoD:
     def reset(self):
         """Reset the episode for multi-agent environment"""
 
-        self.brand_momentum = {0: 0.5, 1: 0.5}
+        self.brand_momentum = {0: self.bm_init, 1: self.bm_init}
         self.trip_assignments = []
         
         self.agent_acc = {agent_id: defaultdict(dict) for agent_id in self.agents}
