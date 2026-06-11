@@ -534,10 +534,10 @@ class PicardSolver:
     # ── building blocks ───────────────────────────────────────────────────────
 
     def _zero_state(self) -> DayState:
-        # M=0.5 matches env.reset(); meta_obs zeros match existing sequential
-        # code path where the first day's meta_obs is np.zeros(7).
+        # brand_momentum matches env.reset() (env.bm_init); meta_obs zeros match
+        # existing sequential code path where the first day's meta_obs is np.zeros(7).
         return DayState(
-            brand_momentum={a: 0.5 for a in self.agents},
+            brand_momentum={a: self.env.bm_init for a in self.agents},
             meta_obs={a: np.zeros(7, dtype=np.float32) for a in self.agents},
         )
 
